@@ -13,7 +13,7 @@
   "plugins": [
     {
       "name": "ocaml-dev",
-      "source": "ocaml-dev",
+      "source": "./plugins/ocaml-dev",
       "description": "Comprehensive OCaml development toolkit with project setup, build migration, testing, RFC integration, opam publishing, and code style assistance",
       "version": "1.0.0",
       "author": {
