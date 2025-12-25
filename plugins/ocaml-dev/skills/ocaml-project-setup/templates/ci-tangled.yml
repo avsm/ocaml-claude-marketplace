@@ -1,0 +1,30 @@
+version: 0.1
+
+runner:
+  image: ghcr.io/ocaml/opam:debian-ocaml-{{OCAML_VERSION}}
+
+env:
+  OPAMYES: 1
+  OPAMCONFIRMLEVEL: unsafe-yes
+
+steps:
+  - name: init
+    command: |
+      opam init --bare -a
+      opam switch create . ocaml.{{OCAML_VERSION}} --no-install
+
+  - name: deps
+    command: |
+      opam install . --deps-only --with-test --with-doc
+
+  - name: build
+    command: |
+      opam exec -- dune build
+
+  - name: test
+    command: |
+      opam exec -- dune runtest --verbose
+
+  - name: doc
+    command: |
+      opam exec -- dune build @doc
