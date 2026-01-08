@@ -21,18 +21,7 @@
         "email": "anil@recoil.org"
       },
       "category": "development",
-      "homepage": "https://github.com/avsm/ocaml-claude-marketplace",
-      "lspServers": {
-        "ocamllsp": {
-          "command": "ocamllsp",
-          "extensionToLanguage": {
-            ".ml": "ocaml",
-            ".mli": "ocaml-interface",
-            ".mly": "menhir",
-            ".mll": "ocamllex"
-          }
-        }
-      }
+      "homepage": "https://github.com/avsm/ocaml-claude-marketplace"
     }
   ]
 }
