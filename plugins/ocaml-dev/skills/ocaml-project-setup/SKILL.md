@@ -1,170 +1,176 @@
 ---
 name: ocaml-project-setup
-description: Standards for OCaml project metadata files. Use when initializing a new OCaml library/module, preparing for opam release, setting up CI, or discussing project structure. Not for normal code edits.
+description: "Standards for OCaml project metadata files. Use when initializing a new OCaml library/module, preparing for opam release, setting up CI, discussing project structure, or ensuring proper .mli/.ocamlformat files exist."
 license: ISC
 ---
 
-# OCaml Project Setup Standards
+# OCaml Project Setup
 
-## When to Use This Skill
+## Required Files
 
-Invoke this skill when:
+Every OCaml project needs:
 
-1. **Initializing a new OCaml project** - Setting up dune-project, LICENSE, README, CI, etc.
-2. **Preparing for opam release** - Ensuring all metadata is correct for publication
-3. **Setting up CI/CD** - Configuring GitHub Actions, Tangled, or GitLab CI
-4. **Discussing project structure** - Best practices for directory layout
+| File | Purpose |
+|------|---------|
+| `dune-project` | Build configuration, opam generation |
+| `dune` (root) | Top-level build rules |
+| `.ocamlformat` | Code formatting (required) |
+| `.gitignore` | VCS ignores |
+| `LICENSE.md` | License file |
+| `README.md` | Project documentation |
+| CI config | GitHub Actions / GitLab CI / Tangled |
 
-**Do not use for:**
-- Regular code edits or bug fixes
-- Simple function additions
-- Refactoring existing code
+## Interface Files (.mli)
+
+**Every library module must have an `.mli` file** for:
+- Clear API boundaries
+- Proper encapsulation
+- Documentation surface
+
+```ocaml
+(* lib/user.mli *)
+
+(** User management.
+
+    This module provides types and functions for user operations. *)
+
+type t
+(** A user. *)
+
+val create : name:string -> email:string -> t
+(** [create ~name ~email] creates a new user. *)
+
+val name : t -> string
+(** [name u] is the user's name. *)
+
+val pp : t Fmt.t
+(** [pp] is a pretty-printer for users. *)
+```
+
+**Documentation style**:
+- Functions: `[name args] is/does ...`
+- Values: `[name] is ...`
+- End with period
+
+## Standard Module Interface
+
+For modules with a central type `t`:
+
+```ocaml
+type t
+val v : ... -> t                           (* pure constructor *)
+val create : ... -> (t, Error.t) result    (* constructor with I/O *)
+val pp : t Fmt.t                           (* pretty-printer - required *)
+val equal : t -> t -> bool                 (* equality *)
+val compare : t -> t -> int                (* comparison *)
+val of_json : Yojson.Safe.t -> (t, string) result
+val to_json : t -> Yojson.Safe.t
+```
+
+## OCamlFormat Configuration
+
+**Required**: `.ocamlformat` in project root.
+
+```
+version = 0.28.1
+```
+
+Run `dune fmt` before every commit.
+
+## Logging Setup
+
+Each module using logging should declare a source:
+
+```ocaml
+let log_src = Logs.Src.create "project.module"
+module Log = (val Logs.src_log log_src : Logs.LOG)
+```
+
+Log levels:
+- `Log.app` - Always shown (startup)
+- `Log.err` - Critical errors
+- `Log.warn` - Potential issues
+- `Log.info` - Informational
+- `Log.debug` - Verbose debugging
 
 ## User Configuration
 
-Read configuration from `~/.claude/ocaml-config.json`:
+Read from `~/.claude/ocaml-config.json`:
 
 ```json
 {
-  "author": {
-    "name": "Author Name",
-    "email": "author@example.com"
-  },
+  "author": { "name": "Name", "email": "email@example.com" },
   "license": "ISC",
-  "copyright_year_start": 2025,
   "ci_platform": "github",
-  "git_hosting": {
-    "type": "github",
-    "org": "username"
-  },
-  "opam_overlay": {
-    "enabled": false,
-    "path": null,
-    "name": null
-  },
+  "git_hosting": { "type": "github", "org": "username" },
   "ocaml_version": "5.2.0"
 }
 ```
 
-If config file doesn't exist, prompt user for values and offer to save.
+## License Headers
 
-## License Header
+Every source file starts with license header:
 
-Every OCaml source file should start with a license header. Use the configured license.
-
-**ISC License:**
 ```ocaml
 (*---------------------------------------------------------------------------
-  Copyright (c) {{YEAR}} {{AUTHOR_NAME}} <{{AUTHOR_EMAIL}}>. All rights reserved.
+  Copyright (c) {{YEAR}} {{AUTHOR}}. All rights reserved.
   SPDX-License-Identifier: ISC
  ---------------------------------------------------------------------------*)
 ```
 
-**MIT License:**
-```ocaml
-(*---------------------------------------------------------------------------
-  Copyright (c) {{YEAR}} {{AUTHOR_NAME}} <{{AUTHOR_EMAIL}}>
+## Project Structure
 
-  Permission is hereby granted, free of charge, to any person obtaining a copy
-  of this software and associated documentation files (the "Software"), to deal
-  in the Software without restriction, including without limitation the rights
-  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-  copies of the Software, and to permit persons to whom the Software is
-  furnished to do so, subject to the following conditions:
-
-  The above copyright notice and this permission notice shall be included in all
-  copies or substantial portions of the Software.
-
-  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
-  SPDX-License-Identifier: MIT
- ---------------------------------------------------------------------------*)
+```
+project/
+├── dune-project
+├── dune
+├── .ocamlformat
+├── .gitignore
+├── LICENSE.md
+├── README.md
+├── lib/
+│   ├── dune
+│   ├── foo.ml
+│   └── foo.mli         # Required for every .ml
+├── bin/
+│   ├── dune
+│   └── main.ml
+├── test/
+│   ├── dune
+│   ├── test.ml
+│   └── test_foo.ml
+└── .github/workflows/  # or .gitlab-ci.yml
 ```
 
-## Build System (Dune)
+## dune-project
 
-Use Dune for builds with automatic opam file generation.
+```lisp
+(lang dune 3.16)
+(name project_name)
+(generate_opam_files true)
+(maintenance_intent "(latest)")
 
-### dune-project
+(package
+ (name project_name)
+ (synopsis "Short description")
+ (description "Longer description")
+ (depends
+  (ocaml (>= 5.2))
+  (alcotest :with-test)))
+```
 
-See `templates/dune-project.template` for the full template.
+**Note**: Don't add `(version ...)` - added at release time.
 
-Key points:
-- Always set `(generate_opam_files true)`
-- Use `(maintenance_intent "(latest)")` for actively maintained projects
-- **Do not add a `(version ...)` field** - added at release time
-- For Tangled projects, use appropriate URL schema
+## Templates
 
-### Root dune file
-
-See `templates/dune-root.template`.
-
-Include `(data_only_dirs third_party)` to ignore fetched dependency sources.
-
-## Version Control
-
-### .gitignore
-
-See `templates/gitignore` for the standard template.
-
-Always include:
-- `_build/`
-- `third_party/`
-- `*.install`
-- Editor and OS files
-
-## Code Formatting
-
-Use OCamlFormat with default styling.
-
-See `templates/ocamlformat` - current version 0.28.1.
-
-## Continuous Integration
-
-Templates available for:
-- GitHub Actions: `templates/ci-github.yml`
-- Tangled: `templates/ci-tangled.yml`
-- GitLab CI: `templates/ci-gitlab.yml`
-
-Select based on user's `ci_platform` configuration.
-
-## Documentation
-
-### README.md
-
-See `templates/README.template.md` for structure.
-
-Include:
-- Project title and brief description
-- Key features
-- Installation instructions
-- Usage examples
-- License
-
-## File Checklist for New Projects
-
-Essential files:
-- [ ] `README.md`
-- [ ] `dune-project`
-- [ ] `dune` (root)
-- [ ] `.ocamlformat`
-- [ ] `.gitignore`
-- [ ] `LICENSE.md`
-- [ ] CI configuration (based on platform)
-- [ ] Source files with license headers
-
-Test files:
-- [ ] `test/dune`
-- [ ] `test/test_*.ml`
-
-## Template Variables
-
-When using templates, replace:
-- `{{PROJECT_NAME}}` - snake_case project name
-- `{{PROJECT_NAME_KEBAB}}` - kebab-case project name
-- `{{AUTHOR_NAME}}` - from config
-- `{{AUTHOR_EMAIL}}` - from config
-- `{{YEAR}}` - current year
-- `{{LICENSE}}` - license identifier (ISC, MIT, etc.)
-- `{{OCAML_VERSION}}` - minimum OCaml version
-- `{{GIT_URL}}` - full git URL
-- `{{GIT_HOSTING_TYPE}}` - github, tangled, or gitlab
+See `templates/` directory for:
+- `dune-project.template`
+- `dune-root.template`
+- `ci-github.yml`
+- `ci-gitlab.yml`
+- `ci-tangled.yml`
+- `gitignore`
+- `ocamlformat`
+- `LICENSE-ISC.md`
+- `LICENSE-MIT.md`
+- `README.template.md`
