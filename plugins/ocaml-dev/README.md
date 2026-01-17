@@ -8,23 +8,53 @@ Comprehensive OCaml development toolkit for Claude Code.
 
 | Command | Description |
 |---------|-------------|
-| `/init-ocaml [name]` | Initialize a new OCaml project |
-| `/port-to-dune` | Migrate from ocamlbuild/topkg to dune |
-| `/add-rfc <number>` | Fetch RFC and add OCamldoc citations |
-| `/ocaml-npm` | Set up npm publishing workflow |
-| `/tidy [path]` | Refactor OCaml code for style |
+| `/init-ocaml [name]` | Initialize a new OCaml project with dune, opam, CI, and standard files |
+| `/port-to-dune` | Migrate from ocamlbuild/topkg to dune build system |
+| `/add-rfc <number>` | Fetch IETF RFC and add OCamldoc citations |
+| `/ocaml-npm` | Set up npm publishing workflow for js_of_ocaml/wasm_of_ocaml |
+| `/tidy [path]` | Refactor OCaml code to be more idiomatic and maintainable |
 
 ### Skills (Auto-invoked)
 
-| Skill | Triggers On |
+#### Project & Build
+
+| Skill | Description |
 |-------|-------------|
-| ocaml-project-setup | "new project", "init", "dune-project" |
-| ocaml-testing | "test", "alcotest", "eio mock" |
-| ocaml-rfc-integration | "RFC", "specification", "standard" |
-| ocaml-dune-migration | "ocamlbuild", "topkg", "_tags" |
-| ocaml-npm-publishing | "npm", "js_of_ocaml", "browser" |
-| ocaml-code-style | "tidy", "refactor", "clean up" |
-| ocaml-tutorials | "tutorial", ".mld", "MDX" |
+| ocaml-project-setup | Project structure, dune-project, .mli files, CI configuration |
+| ocaml-dune-migration | Migrating from ocamlbuild/topkg to dune (_tags, .mllib, pkg.ml) |
+| ocaml-npm-publishing | Publishing to npm via js_of_ocaml and wasm_of_ocaml |
+
+#### Code Quality
+
+| Skill | Description |
+|-------|-------------|
+| ocaml-code-style | Refactoring patterns, naming conventions, module hygiene |
+| ocaml-testing | Testing with Alcotest, Eio mocks, cram tests |
+| fuzz | Fuzz testing with Crowbar for parsers and encoders |
+
+#### Documentation
+
+| Skill | Description |
+|-------|-------------|
+| ocaml-docs | Fixing odoc warnings, reference syntax, cross-package refs |
+| ocaml-tutorials | Creating .mld tutorials with MDX executable examples |
+| ocaml-rfc-integration | Working with IETF RFCs, OCamldoc citations |
+
+#### Libraries & Frameworks
+
+| Skill | Description |
+|-------|-------------|
+| eio | Eio concurrency: fibers, switches, mocks, cohttp-eio, bytesrw |
+| cmdliner | CLI design with cmdliner following Bünzli's principles |
+| jsont | Type-safe JSON encoding/decoding with jsont |
+| effects | OCaml 5 algebraic effects design patterns |
+
+#### Performance & Advanced
+
+| Skill | Description |
+|-------|-------------|
+| memtrace | Allocation profiling to identify hotspots |
+| oxcaml | OxCaml extensions: modes, stack allocation, unboxed types, SIMD, zero-alloc |
 
 ### LSP Integration
 
@@ -45,7 +75,7 @@ User settings are read from `~/.claude/ocaml-config.json`:
     "email": "you@example.com"
   },
   "license": "ISC",
-  "copyright_year_start": 2025,
+  "copyright_year_start": 2026,
   "ci_platform": "github",
   "git_hosting": {
     "type": "github",
