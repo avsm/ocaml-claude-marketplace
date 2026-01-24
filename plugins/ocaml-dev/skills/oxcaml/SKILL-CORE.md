@@ -242,37 +242,187 @@ val Deferred.map__portable
 
 ## Bigstring Extensions
 
-### Unboxed Access
+Core's `Bigstring` module provides optimized operations on `Bigarray.Array1.t`
+with OxCaml extensions for unboxed access and local operations.
+
+### Type and Creation
 
 ```ocaml
 module Bigstring : sig
-  (* Unboxed getters - no allocation *)
-  val get_int64_le_unboxed : t -> pos:int -> int64#
-  val get_int32_le_unboxed : t -> pos:int -> int32#
-  val get_float_unboxed : t -> pos:int -> float#
+  (* Bigstring is a char bigarray with C layout *)
+  type t = (char, int8_unsigned_elt, c_layout) Bigarray.Array1.t
 
-  (* Unboxed setters *)
-  val set_int64_le_unboxed : t -> pos:int -> int64# -> unit
-  val set_int32_le_unboxed : t -> pos:int -> int32# -> unit
-  val set_float_unboxed : t -> pos:int -> float# -> unit
+  (* Creation *)
+  val create : int -> t
+  val init : int -> f:(int -> char) -> t
+
+  (* Local creation - stack allocated *)
+  val create__local : int -> t @ local
+
+  (* From existing data *)
+  val of_string : ?pos:int -> ?len:int -> string -> t
+  val of_bytes : ?pos:int -> ?len:int -> bytes -> t
+
+  (* Sub-view (shares memory) *)
+  val sub_shared : ?pos:int -> ?len:int -> t -> t
 end
+```
+
+### Basic Access (Boxed)
+
+```ocaml
+(* Single byte access *)
+val get : t -> int -> char
+val set : t -> int -> char -> unit
+val unsafe_get : t -> int -> char
+val unsafe_set : t -> int -> char -> unit
+
+(* Multi-byte access - little endian *)
+val get_int16_le : t -> pos:int -> int
+val get_int32_le : t -> pos:int -> int32
+val get_int64_le : t -> pos:int -> int64
+val get_float : t -> pos:int -> float  (* IEEE 754 double *)
+
+(* Multi-byte access - big endian *)
+val get_int16_be : t -> pos:int -> int
+val get_int32_be : t -> pos:int -> int32
+val get_int64_be : t -> pos:int -> int64
+
+(* Setters follow same pattern *)
+val set_int32_le : t -> pos:int -> int32 -> unit
+val set_int64_le : t -> pos:int -> int64 -> unit
+val set_float : t -> pos:int -> float -> unit
+(* etc. *)
+```
+
+### Unboxed Access (Zero Allocation)
+
+These functions avoid boxing overhead for numeric types:
+
+```ocaml
+(* Unboxed getters - no heap allocation *)
+val get_int32_le_unboxed : t -> pos:int -> int32#
+val get_int32_be_unboxed : t -> pos:int -> int32#
+val get_int64_le_unboxed : t -> pos:int -> int64#
+val get_int64_be_unboxed : t -> pos:int -> int64#
+val get_float_unboxed : t -> pos:int -> float#
+
+(* Unboxed setters *)
+val set_int32_le_unboxed : t -> pos:int -> int32# -> unit
+val set_int32_be_unboxed : t -> pos:int -> int32# -> unit
+val set_int64_le_unboxed : t -> pos:int -> int64# -> unit
+val set_int64_be_unboxed : t -> pos:int -> int64# -> unit
+val set_float_unboxed : t -> pos:int -> float# -> unit
+
+(* Unsafe unboxed variants (no bounds check) *)
+val unsafe_get_int64_le_unboxed : t -> pos:int -> int64#
+val unsafe_set_int64_le_unboxed : t -> pos:int -> int64# -> unit
+(* etc. *)
+```
+
+### Bulk Operations
+
+```ocaml
+(* Memory operations *)
+val length : t -> int
+val blit : src:t -> src_pos:int -> dst:t -> dst_pos:int -> len:int -> unit
+val memset : t -> pos:int -> len:int -> char -> unit
+val memcmp : t -> pos1:int -> t -> pos2:int -> len:int -> int
+
+(* With bytes/string *)
+val blit_string_bigstring : string -> src_pos:int -> t -> dst_pos:int -> len:int -> unit
+val blit_bigstring_string : t -> src_pos:int -> bytes -> dst_pos:int -> len:int -> unit
+val blit_bigstring_bytes : t -> src_pos:int -> bytes -> dst_pos:int -> len:int -> unit
+val blit_bytes_bigstring : bytes -> src_pos:int -> t -> dst_pos:int -> len:int -> unit
+```
+
+### String/Bytes Conversion
+
+```ocaml
+(* To string/bytes - copies data *)
+val to_string : ?pos:int -> ?len:int -> t -> string
+val to_bytes : ?pos:int -> ?len:int -> t -> bytes
+
+(* Local variants - result is stack-allocated *)
+val to_string__local : ?pos:int -> ?len:int -> t -> string @ local
+val to_bytes__local : ?pos:int -> ?len:int -> t -> bytes @ local
+
+(* Substring extraction *)
+val get_string : t -> pos:int -> len:int -> string
+val get_string__local : t -> pos:int -> len:int -> string @ local
+```
+
+### Local Operations
+
+```ocaml
+(* Find with local predicate *)
+val find__local : t -> pos:int -> len:int -> f:(char -> bool @ local) -> int option
+
+(* Iterate with local closure *)
+val iter__local : t -> f:(char -> unit @ local) -> unit
+val iteri__local : t -> f:(int -> char -> unit @ local) -> unit
+
+(* Fold with local accumulator function *)
+val fold__local : t -> init:'a -> f:('a -> char -> 'a @ local) -> 'a
+```
+
+### I/O Operations
+
+```ocaml
+(* File I/O - zero-copy where possible *)
+val read : Unix.file_descr -> ?pos:int -> ?len:int -> t -> int
+val write : Unix.file_descr -> ?pos:int -> ?len:int -> t -> int
+val really_read : Unix.file_descr -> ?pos:int -> ?len:int -> t -> unit
+val really_write : Unix.file_descr -> ?pos:int -> ?len:int -> t -> unit
+
+(* With In_channel/Out_channel *)
+val input : In_channel.t -> ?pos:int -> ?len:int -> t -> int
+val output : Out_channel.t -> ?pos:int -> ?len:int -> t -> unit
 ```
 
 ### Zero-Copy Patterns
 
 ```ocaml
-let process_binary_data bigstring =
-  (* Read header without boxing *)
-  let magic = Bigstring.get_int32_le_unboxed bigstring ~pos:0 in
-  let length = Bigstring.get_int32_le_unboxed bigstring ~pos:4 in
-  let timestamp = Bigstring.get_int64_le_unboxed bigstring ~pos:8 in
+(* Parse binary protocol without allocation *)
+let[@zero_alloc] parse_header bigstring ~pos =
+  let magic = Bigstring.get_int32_le_unboxed bigstring ~pos in
+  let version = Bigstring.get_int16_le bigstring ~pos:(pos + 4) in
+  let length = Bigstring.get_int32_le_unboxed bigstring ~pos:(pos + 6) in
+  let timestamp = Bigstring.get_int64_le_unboxed bigstring ~pos:(pos + 10) in
+  #{ magic; version; length; timestamp }  (* unboxed record *)
 
-  (* Process without allocation *)
-  if Int32_u.equal magic expected_magic then
-    process_payload bigstring ~pos:16 ~len:(Int32_u.to_int length)
-  else
-    Error `Invalid_magic
+(* Process packet stream *)
+let process_packets bigstring =
+  let len = Bigstring.length bigstring in
+  let rec loop pos =
+    if pos >= len then ()
+    else begin
+      let pkt_len = Bigstring.get_int32_le_unboxed bigstring ~pos in
+      let pkt_len_int = Int32_u.to_int pkt_len in
+      (* Process without copying *)
+      handle_packet bigstring ~pos:(pos + 4) ~len:pkt_len_int;
+      loop (pos + 4 + pkt_len_int)
+    end
+  in
+  loop 0
+
+(* Local string extraction for temporary use *)
+let find_field bigstring ~field_pos ~field_len =
+  let local_ field_str = Bigstring.get_string__local bigstring
+    ~pos:field_pos ~len:field_len in
+  lookup_field field_str  (* result escapes, string doesn't *)
 ```
+
+### Comparison with Bytes
+
+| Operation | `Bytes` | `Bigstring` | Notes |
+|-----------|---------|-------------|-------|
+| Allocation | OCaml heap | C heap | Bigstring avoids GC pressure |
+| Max size | ~16MB (32-bit) | System limit | Bigstring for large buffers |
+| Access speed | Fast | Fast | Both have optimized primitives |
+| Unboxed access | No | Yes | Bigstring has `_unboxed` variants |
+| mmap compatible | No | Yes | Bigstring can wrap mmap'd memory |
+| Local creation | Yes | Yes | Both support stack allocation |
 
 ---
 

@@ -44,6 +44,18 @@ Python and Haskell.
 (* Returns int iarray *)
 ```
 
+### Unboxed/Untagged Array Comprehensions
+
+Comprehensions work with unboxed and untagged arrays:
+
+```ocaml
+(* Unboxed float array comprehension *)
+[| #(Float.of_int x) for x = 1 to 10 |] : float# array
+
+(* Untagged int8 array comprehension *)
+[| #(Int8.of_int x) for x = 0 to 255 |] : int8# array
+```
+
 ---
 
 ## Iterators

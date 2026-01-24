@@ -260,6 +260,142 @@ let i = Int32x8.set 8l 7l 6l 5l 4l 3l 2l 1l
 
 ---
 
+## SIMD Load/Store Intrinsics (NEW in 5.2.0minus-25)
+
+Direct memory operations with proper alignment handling:
+
+```ocaml
+(* Aligned load/store - requires 16/32-byte alignment *)
+external vec128_load_aligned : bytes -> int -> int8x16#
+external vec128_store_aligned : bytes -> int -> int8x16# -> unit
+
+(* Unaligned load/store - works with any alignment *)
+external vec128_load_unaligned : bytes -> int -> int8x16#
+external vec128_store_unaligned : bytes -> int -> int8x16# -> unit
+
+(* Non-temporal stores - bypass cache, good for streaming writes *)
+external vec128_store_aligned_uncached : bytes -> int -> int8x16# -> unit
+
+(* Partial loads *)
+external vec128_load_low64 : bytes -> int -> int64x2#  (* Load 64 bits to low lane *)
+external vec128_load_low32 : bytes -> int -> int32x4#  (* Load 32 bits to low lane *)
+```
+
+---
+
+## AVX2 Gather Intrinsics (NEW in 5.2.0minus-25)
+
+Gather operations load multiple values from non-contiguous memory addresses:
+
+```ocaml
+(* Gather 32-bit integers using int32 indices *)
+(* Base address + indices * scale, masked by mask *)
+external gather_int32x4 :
+  base:nativeint -> indices:int32x4# -> scale:int -> mask:int32x4# -> int32x4#
+
+(* Gather 64-bit integers *)
+external gather_int64x2 :
+  base:nativeint -> indices:int64x2# -> scale:int -> mask:int64x2# -> int64x2#
+
+(* Gather floats *)
+external gather_float32x4 :
+  base:nativeint -> indices:int32x4# -> scale:int -> mask:float32x4# -> float32x4#
+
+external gather_float64x2 :
+  base:nativeint -> indices:int64x2# -> scale:int -> mask:float64x2# -> float64x2#
+
+(* Scale must be 1, 2, 4, or 8 *)
+```
+
+---
+
+## BMI/BMI2 Intrinsics (NEW in 5.2.0minus-25)
+
+Bit manipulation instructions for efficient bit operations:
+
+### BMI (Bit Manipulation Instruction Set 1)
+
+```ocaml
+(* ANDN: Bitwise AND of inverted first operand with second *)
+external bmi_andn_int32 : int32# -> int32# -> int32#
+external bmi_andn_int64 : int64# -> int64# -> int64#
+
+(* BEXTR: Bit field extract *)
+external bmi_bextr_int32 : int32# -> int32# -> int32#
+external bmi_bextr_int64 : int64# -> int64# -> int64#
+
+(* BLSI: Extract lowest set bit *)
+external bmi_blsi_int32 : int32# -> int32#
+external bmi_blsi_int64 : int64# -> int64#
+
+(* BLSMSK: Get mask up to lowest set bit *)
+external bmi_blsmsk_int32 : int32# -> int32#
+external bmi_blsmsk_int64 : int64# -> int64#
+
+(* BLSR: Reset lowest set bit *)
+external bmi_blsr_int32 : int32# -> int32#
+external bmi_blsr_int64 : int64# -> int64#
+
+(* TZCNT: Count trailing zero bits *)
+external bmi_tzcnt_int32 : int32# -> int32#
+external bmi_tzcnt_int64 : int64# -> int64#
+```
+
+### BMI2 (Bit Manipulation Instruction Set 2)
+
+```ocaml
+(* BZHI: Zero high bits starting at specified position *)
+external bmi2_bzhi_int32 : int32# -> int32# -> int32#
+external bmi2_bzhi_int64 : int64# -> int64# -> int64#
+
+(* MULX: Unsigned multiply without affecting flags *)
+external bmi2_mulx_int32 : int32# -> int32# -> #(int32# * int32#)
+external bmi2_mulx_int64 : int64# -> int64# -> #(int64# * int64#)
+
+(* PDEP: Parallel bits deposit *)
+external bmi2_pdep_int32 : int32# -> int32# -> int32#
+external bmi2_pdep_int64 : int64# -> int64# -> int64#
+
+(* PEXT: Parallel bits extract *)
+external bmi2_pext_int32 : int32# -> int32# -> int32#
+external bmi2_pext_int64 : int64# -> int64# -> int64#
+
+(* RORX: Rotate right without affecting flags *)
+external bmi2_rorx_int32 : int32# -> int -> int32#
+external bmi2_rorx_int64 : int64# -> int -> int64#
+
+(* SARX/SHRX/SHLX: Shift without affecting flags *)
+external bmi2_sarx_int32 : int32# -> int32# -> int32#
+external bmi2_shrx_int64 : int64# -> int64# -> int64#
+external bmi2_shlx_int32 : int32# -> int32# -> int32#
+```
+
+### POPCNT/LZCNT
+
+```ocaml
+(* Population count: count set bits *)
+external popcnt_int32 : int32# -> int32#
+external popcnt_int64 : int64# -> int64#
+
+(* Leading zero count *)
+external lzcnt_int32 : int32# -> int32#
+external lzcnt_int64 : int64# -> int64#
+```
+
+---
+
+## 128-bit Integer Arithmetic (NEW in 5.2.0minus-25)
+
+Support for wide integer operations using SIMD registers:
+
+```ocaml
+(* 128-bit add/subtract carried through register pairs *)
+external int128_add : int64# -> int64# -> int64# -> int64# -> #(int64# * int64#)
+external int128_sub : int64# -> int64# -> int64# -> int64# -> #(int64# * int64#)
+```
+
+---
+
 ## C FFI
 
 ### External Declarations
@@ -363,6 +499,7 @@ let add_vec4 a b = {
 
 - x86-64 only (ARM NEON coming soon)
 - Requires SSE2 minimum, AVX/AVX2 for 256-bit
+- BMI/BMI2 require specific CPU support (Haswell+)
 - No auto-vectorization (explicit SIMD required)
 - Alignment not automatically guaranteed
 

@@ -1,6 +1,6 @@
 ---
 name: oxcaml
-description: Working with the OxCaml extensions to OCaml. Use when the oxcaml compiler is available and you need high-performance, unboxing, stack allocation, data-race-free parallelism.
+description: Working with the OxCaml extensions to OCaml. Use when the oxcaml compiler is available and you need high-performance, unboxing, stack allocation, data-race-free parallelism
 license: ISC
 ---
 
@@ -60,6 +60,10 @@ let ~x, ~y = pair                       (* destructuring *)
 let arr : int iarray = [: 1; 2; 3 :]
 let x = arr.:(0)
 
+(* Unboxed tuple destructuring - use #(...) pattern *)
+let #(a, b) = some_unboxed_pair
+let #(x, y, z) = fork_join3 par f1 f2 f3
+
 (* Zero-alloc annotation *)
 let[@zero_alloc] fast_add x y = x + y
 ```
@@ -77,8 +81,8 @@ Modes track runtime properties of values. Each mode axis is independent.
 | Locality | `local`, `global` | `global` | Where value lives (stack vs heap) |
 | Uniqueness | `unique`, `aliased` | `aliased` | Number of references |
 | Linearity | `once`, `many` | `many` | How often closures can be called |
-| Portability | `portable`, `nonportable` | `nonportable` | Cross-thread safety |
-| Contention | `contended`, `uncontended` | `uncontended` | Thread access patterns |
+| Portability | `portable`, `shareable`, `nonportable` | `nonportable` | Cross-thread safety |
+| Contention | `contended`, `shared`, `uncontended` | `uncontended` | Thread access patterns |
 
 ### Syntax
 
@@ -112,8 +116,8 @@ More restrictive modes can be used where less restrictive are expected:
 - `global` ≤ `local` (can use global where local expected)
 - `unique` ≤ `aliased` (can use unique where aliased expected)
 - `many` ≤ `once` (can use many where once expected)
-- `portable` ≤ `nonportable`
-- `uncontended` ≤ `contended`
+- `portable` ≤ `shareable` ≤ `nonportable`
+- `uncontended` ≤ `shared` ≤ `contended`
 
 ---
 
@@ -180,18 +184,39 @@ int32#     (* 32-bit int, kind bits32 *)
 int64#     (* 64-bit int, kind bits64 *)
 nativeint# (* native int, kind word *)
 float32#   (* 32-bit float, kind float32 *)
-int8#      (* 8-bit int *)
-int16#     (* 16-bit int *)
+int8#      (* 8-bit int - untagged *)
+int16#     (* 16-bit int - untagged *)
+int#       (* native int - untagged *)
+char#      (* 8-bit char - untagged, same layout as int8# *)
 
 (* Literals use # prefix *)
 let x : float# = #3.14
 let y : int32# = #42l
 let z : int64# = #100L
 let w : float32# = #1.0s
+let a : int8# = #42s       (* int8# literal *)
+let b : int16# = #42S      (* int16# literal *)
+let c : char# = #'x'       (* char# literal *)
 
 (* Boxed versions (heap-allocated) *)
 let a : float = 3.14       (* boxed *)
 let b : float# = #3.14     (* unboxed *)
+```
+
+### Untagged Int Arrays (New in 5.2.0minus-25)
+
+Arrays of untagged types are packed for memory efficiency:
+
+```ocaml
+(* Untagged int arrays - tightly packed *)
+let bytes : int8# array = [| #0s; #1s; #255s |]
+let shorts : int16# array = [| #0S; #1S; #32767S |]
+let ints : int# array = [| #0; #1; #42 |]
+let chars : char# array = [| #'a'; #'b'; #'c' |]
+
+(* int8# array: 1 byte per element *)
+(* int16# array: 2 bytes per element *)
+(* int# array: native word size per element *)
 ```
 
 ### Unboxed Records
@@ -587,13 +612,15 @@ Safe parallel programming with thread isolation.
 
 ### Contention Modes
 
-- `contended`: May be accessed from multiple threads
+- `contended`: May be accessed from multiple threads concurrently
+- `shared`: May be accessed from multiple threads (for shared state)
 - `uncontended`: Single-thread access
 
 ### Portability Modes
 
-- `portable`: Safe to send across threads
-- `nonportable`: Thread-local only
+- `portable`: Safe to move across thread boundaries, captures all values at contended
+- `shareable`: May execute in parallel, captures shared state
+- `nonportable`: Thread-local only, captures uncontended mutable state
 
 ### Capsules (Experimental)
 
@@ -707,6 +734,17 @@ char#
 42S     (* int16 *)
 #42S    (* int16# *)
 #'a'    (* char# *)
+
+(* Arrays - now supported and packed! *)
+int8 array    int8# array     (* 1 byte per element *)
+int16 array   int16# array    (* 2 bytes per element *)
+char# array                   (* 1 byte per element *)
+
+(* Pattern matching with char# ranges *)
+match c with
+| #'a'..#'z' -> `lowercase
+| #'A'..#'Z' -> `uppercase
+| _ -> `other
 ```
 
 ### Module Strengthening
@@ -790,8 +828,11 @@ type%template ('a : k) box = { contents : 'a }
 ### Core Libraries
 
 - **`stdlib_stable`**: Immutable arrays (`Iarray`), `Float32`, `Int8`, `Int16`, `Char_u`
-- **`base`**: Jane Street's standard library with OxCaml mode support
-  - See [SKILL-BASE.md](SKILL-BASE.md) for `__local` variants, portable functors
+- **`base`**: Jane Street's standard library with comprehensive OxCaml mode support
+  - **IMPORTANT**: Consult [SKILL-BASE.md](SKILL-BASE.md) for OxCaml-friendly functions!
+  - Contains 116 modules with extensive local/exclave, mode, and unboxed type support
+  - Key modules: `Modes` (modal wrappers), `Iarray` (immutable arrays with local ops),
+    `Container_with_local`, and `__local` variants of most collection functions
 - **`core`**: Extended library with I/O, async, and system features
   - See [SKILL-CORE.md](SKILL-CORE.md) for Iobuf, Time_ns, Bigstring extensions
 

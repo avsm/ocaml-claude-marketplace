@@ -97,6 +97,9 @@ immutable_data  (* value mod non_float immutable *)
 | `nativeint#` | `word` |
 | `int8x16#`, etc. | `vec128` |
 | `int8x32#`, etc. | `vec256` |
+| `int8# array` | `value` (specialized subkind) |
+| `int16# array` | `value` (specialized subkind) |
+| `int# array` | `value` (specialized subkind) |
 
 ---
 

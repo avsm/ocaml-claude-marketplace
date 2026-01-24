@@ -17,6 +17,7 @@ OCaml's type safety.
 | `float32` | `float32#` | `float32` | 32-bit | `#1.0s` |
 | `int8` | `int8#` | - | 8-bit | `#42s` |
 | `int16` | `int16#` | - | 16-bit | `#42S` |
+| `int` | `int#` | - | native | `#42` (untagged) |
 | - | `char#` | - | 8-bit | `#'a'` |
 
 ### Creating Unboxed Values
@@ -156,9 +157,9 @@ let g () : float# or_null = This #3.14  (* No allocation *)
 
 ---
 
-## Unboxed Arrays
+## Unboxed and Untagged Arrays
 
-Arrays of unboxed types are packed:
+Arrays of unboxed and untagged types are packed for memory efficiency:
 
 ```ocaml
 (* Unboxed float array - tightly packed *)
@@ -167,21 +168,32 @@ let floats : float# array = [| #1.0; #2.0; #3.0 |]
 (* Access *)
 let first = floats.(0)  (* Returns float# *)
 
-(* Unboxed int32 array *)
-let ints : int32# array = [| #1l; #2l; #3l |]
+(* Unboxed int32/int64 arrays *)
+let ints32 : int32# array = [| #1l; #2l; #3l |]
+let ints64 : int64# array = [| #1L; #2L; #3L |]
 
-(* Small number arrays are also packed *)
-let bytes : int8# array = [| #0s; #1s; #2s |]
+(* Untagged small int arrays (NEW in 5.2.0minus-25) *)
+let bytes : int8# array = [| #0s; #1s; #255s |]
+let shorts : int16# array = [| #0S; #1S; #32767S |]
+let ints : int# array = [| #0; #1; #42 |]
 let chars : char# array = [| #'a'; #'b'; #'c' |]
 ```
 
 ### Array Memory Layout
 
-```ocaml
-(* float array (boxed) - each element is 8 bytes *)
-(* float# array - also 8 bytes per element, but custom block *)
-(* int8# array - 1 byte per element, packed *)
-```
+| Array Type | Bytes per Element | Notes |
+|------------|-------------------|-------|
+| `float# array` | 8 | Custom block, packed |
+| `float32# array` | 4 | Custom block, packed |
+| `int64# array` | 8 | Custom block, packed |
+| `int32# array` | 4 | Custom block, packed |
+| `int# array` | native word | Untagged, packed |
+| `int16# array` | 2 | Untagged, packed |
+| `int8# array` | 1 | Untagged, packed |
+| `char# array` | 1 | Same as int8# array |
+
+The untagged int arrays use special block tags to encode the exact length
+when the element count doesn't fill a whole word.
 
 ---
 

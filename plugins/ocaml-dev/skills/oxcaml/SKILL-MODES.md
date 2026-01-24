@@ -13,8 +13,8 @@ OxCaml has five independent mode axes:
 | Locality | `local` / `global` | Stack vs heap allocation |
 | Uniqueness | `unique` / `aliased` | Single vs multiple references |
 | Linearity | `once` / `many` | Closure invocation count |
-| Portability | `portable` / `nonportable` | Cross-thread safety |
-| Contention | `contended` / `uncontended` | Concurrent access |
+| Portability | `portable` / `shareable` / `nonportable` | Cross-thread safety |
+| Contention | `contended` / `shared` / `uncontended` | Concurrent access |
 
 Each axis is independent - a value can be `local unique once` or `global aliased many`.
 
@@ -79,6 +79,11 @@ type t = {
 }
 ```
 
+**Important**: For modalities, `@@ global` always implies `@@ aliased`. You cannot
+use `@@ global unique` together - this restriction ensures soundness of the
+upcoming borrowing feature. If you need a global field in a unique context,
+use `@@ global aliased` explicitly.
+
 ---
 
 ## Subtyping (Mode Coercion)
@@ -90,8 +95,8 @@ Modes have a subtyping relationship. You can use a "stronger" mode where a
 Locality:    global ≤ local     (global values can be used as local)
 Uniqueness:  unique ≤ aliased   (unique values can be used as aliased)
 Linearity:   many ≤ once        (many closures can be used as once)
-Portability: portable ≤ nonportable
-Contention:  uncontended ≤ contended
+Portability: portable ≤ shareable ≤ nonportable
+Contention:  uncontended ≤ shared ≤ contended
 ```
 
 ### Examples
@@ -316,6 +321,38 @@ let good (r @ unique) =
 | Let binding | `let mode_ x =` | `let local_ x = ...` |
 | Record field | `mode_ field :` | `global_ data : string` |
 | Record field | `: t @@ modality` | `: t @@ aliased` |
+
+---
+
+## Portability and Contention (Three-Way Axes)
+
+The portability and contention axes now have three values each:
+
+### Portability Axis
+
+| Mode | Meaning |
+|------|---------|
+| `nonportable` | Functions capturing uncontended mutable state; cannot escape current thread |
+| `shareable` | Functions capturing shared state; may execute in parallel |
+| `portable` | Functions capturing all values at contended; may execute concurrently |
+
+### Contention Axis
+
+| Mode | Meaning |
+|------|---------|
+| `uncontended` | Single-thread access; full read/write |
+| `shared` | Multi-thread access; synchronized sharing |
+| `contended` | Multi-thread concurrent access |
+
+### Mode Implications
+
+Certain modalities imply others for soundness:
+
+- `@@ global` implies `@@ aliased` (for borrowing soundness)
+- `stateless` implies `portable`
+- `observing` implies `shareable`
+- `immutable` implies `contended`
+- `read` implies `shared`
 
 See also: [SKILL-STACK-ALLOCATION.md](SKILL-STACK-ALLOCATION.md) for locality details,
 [SKILL-UNIQUENESS.md](SKILL-UNIQUENESS.md) for uniqueness patterns.
