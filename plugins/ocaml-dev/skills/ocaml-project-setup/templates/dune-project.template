@@ -1,4 +1,4 @@
-(lang dune 3.20)
+(lang dune 3.21)
 
 (name {{PROJECT_NAME}})
 
@@ -24,8 +24,7 @@
   (alcotest (and :with-test (>= 1.7.0)))))
 
 ; Uncomment for Tangled.org hosting:
-; (source
-;  (uri "https://tangled.org/{{GIT_ORG}}/{{PROJECT_NAME_KEBAB}}"))
+; (source (tangled {{GIT_ORG}}/{{PROJECT_NAME_KEBAB}}))
 
 ; Uncomment for GitLab hosting:
 ; (source

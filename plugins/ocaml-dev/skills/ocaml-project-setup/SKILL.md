@@ -139,16 +139,22 @@ project/
 │   ├── dune
 │   ├── test.ml
 │   └── test_foo.ml
-└── .github/workflows/  # or .gitlab-ci.yml
+├── .github/workflows/  # GitHub Actions
+├── .gitlab-ci.yml      # GitLab CI
+└── .tangled/workflows/ # Tangled CI
 ```
 
 ## dune-project
 
 ```lisp
-(lang dune 3.16)
+(lang dune 3.21)
 (name project_name)
 (generate_opam_files true)
-(maintenance_intent "(latest)")
+
+(license ISC)
+(authors "Name <email@example.com>")
+(maintainers "Name <email@example.com>")
+(source (tangled user.domain/project_name))
 
 (package
  (name project_name)
@@ -156,10 +162,101 @@ project/
  (description "Longer description")
  (depends
   (ocaml (>= 5.2))
-  (alcotest :with-test)))
+  (alcotest (and :with-test (>= 1.7.0)))))
 ```
 
 **Note**: Don't add `(version ...)` - added at release time.
+
+### Tangled Source Syntax
+
+For projects hosted on tangled.org, use the succinct source stanza:
+
+```lisp
+(source (tangled user.domain/project-name))
+```
+
+Examples:
+- `(source (tangled anil.recoil.org/ocaml-brotli))`
+- `(source (tangled user.example.org/my-library))`
+
+## Tangled CI Configuration
+
+For projects hosted on tangled.org, create `.tangled/workflows/build.yml`:
+
+```yaml
+when:
+  - event: ["push", "pull_request"]
+    branch: ["main"]
+
+engine: nixery
+
+dependencies:
+  nixpkgs:
+    - shell
+    - stdenv
+    - findutils
+    - binutils
+    - libunwind
+    - ncurses
+    - opam
+    - git
+    - gawk
+    - gnupatch
+    - gnum4
+    - gnumake
+    - gnutar
+    - gnused
+    - gnugrep
+    - diffutils
+    - gzip
+    - bzip2
+    - gcc
+    - ocaml
+    - pkg-config
+
+steps:
+  - name: opam
+    command: |
+      opam init --disable-sandboxing -a -y
+
+  - name: repo
+    command: |
+      opam repo add aoah https://tangled.org/anil.recoil.org/aoah-opam-repo.git
+
+  - name: deps
+    command: |
+      opam install . --confirm-level=unsafe-yes --deps-only
+
+  - name: build
+    command: |
+      opam exec -- dune build
+
+  - name: test
+    command: |
+      opam install . --confirm-level=unsafe-yes --deps-only --with-test
+      opam exec -- dune runtest --verbose
+```
+
+### Tangled Workflow Syntax
+
+| Field | Description |
+|-------|-------------|
+| `when` | Trigger conditions: `event` (push/pull_request) and `branch` |
+| `engine` | Build engine, use `nixery` for Nix-based builds |
+| `dependencies.nixpkgs` | List of Nix packages to include |
+| `environment` | Global or per-step environment variables |
+| `steps` | Build steps with `name` and `command` |
+
+Per-step environment variables:
+
+```yaml
+steps:
+  - name: test
+    environment:
+      MY_VAR: value
+    command: |
+      echo $MY_VAR
+```
 
 ## Templates
 
