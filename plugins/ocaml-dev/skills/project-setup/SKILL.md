@@ -1,7 +1,6 @@
 ---
-name: ocaml-project-setup
+name: project-setup
 description: "Standards for OCaml project metadata files. Use when initializing a new OCaml library/module, preparing for opam release, setting up CI, discussing project structure, or ensuring proper .mli/.ocamlformat files exist."
-license: ISC
 ---
 
 # OCaml Project Setup

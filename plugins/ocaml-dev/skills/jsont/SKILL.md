@@ -1,7 +1,6 @@
 ---
 name: jsont
-description: "JSON type-safe encoding and decoding using Daniel Bünzli's jsont library. Use when Claude needs to: (1) Define typed JSON codecs for OCaml record types, (2) Parse JSON strings to OCaml values, (3) Serialize OCaml values to JSON, (4) Handle optional fields and backwards compatibility, (5) Work with nested JSON structures"
-license: ISC
+description: "JSON type-safe encoding and decoding using the jsont library. Use when Claude needs to: (1) Define typed JSON codecs for OCaml record types, (2) Parse JSON strings to OCaml values, (3) Serialize OCaml values to JSON, (4) Handle optional fields and backwards compatibility, (5) Work with nested JSON structures"
 ---
 
 # Jsont JSON Encoding/Decoding
@@ -222,6 +221,121 @@ let encode codec v =
 | `'a option` | `Jsont.option codec` | value or null |
 | `unit` | `Jsont.null ()` | null |
 | generic | `Jsont.json` | any JSON |
+
+## Good and Bad Examples
+
+### Missing `~kind`
+
+**Bad**: No kind makes error messages unhelpful
+```ocaml
+let config_codec =
+  Jsont.Object.map (fun name -> { name })  (* No ~kind *)
+  |> Jsont.Object.mem "name" Jsont.string ~enc:(fun c -> c.name)
+  |> Jsont.Object.finish
+(* Error: "expected string" - but where? *)
+```
+
+**Good**: Descriptive kind for clear errors
+```ocaml
+let config_codec =
+  Jsont.Object.map ~kind:"config" (fun name -> { name })
+  |> Jsont.Object.mem "name" Jsont.string ~enc:(fun c -> c.name)
+  |> Jsont.Object.finish
+(* Error: "config: expected string for member 'name'" *)
+```
+
+### Strict vs Tolerant Parsing
+
+**Bad**: Strict parsing breaks when API adds fields
+```ocaml
+(* API adds "created_at" field, your code breaks *)
+let user_codec =
+  Jsont.Object.map ~kind:"user" (fun id name -> { id; name })
+  |> Jsont.Object.mem "id" Jsont.int ~enc:(fun u -> u.id)
+  |> Jsont.Object.mem "name" Jsont.string ~enc:(fun u -> u.name)
+  |> Jsont.Object.finish  (* No skip_unknown! *)
+```
+
+**Good**: Tolerant parsing ignores unknown fields
+```ocaml
+let user_codec =
+  Jsont.Object.map ~kind:"user" (fun id name -> { id; name })
+  |> Jsont.Object.mem "id" Jsont.int ~enc:(fun u -> u.id)
+  |> Jsont.Object.mem "name" Jsont.string ~enc:(fun u -> u.name)
+  |> Jsont.Object.skip_unknown  (* Ignore extra fields *)
+  |> Jsont.Object.finish
+```
+
+### Handling Optional Fields
+
+**Bad**: Nullable field without default causes runtime errors
+```ocaml
+(* Field missing → decode fails *)
+let config_codec =
+  Jsont.Object.map ~kind:"config" (fun timeout -> { timeout })
+  |> Jsont.Object.mem "timeout" Jsont.int ~enc:(fun c -> c.timeout)
+  |> Jsont.Object.finish
+```
+
+**Good**: Use `opt_mem` with sensible default
+```ocaml
+let config_codec =
+  Jsont.Object.map ~kind:"config"
+    (fun timeout_opt -> { timeout = Option.value ~default:30 timeout_opt })
+  |> Jsont.Object.opt_mem "timeout" Jsont.int ~enc:(fun c -> Some c.timeout)
+  |> Jsont.Object.finish
+```
+
+### Codec Composition
+
+**Bad**: Monolithic codec with duplicated patterns
+```ocaml
+let request_codec =
+  Jsont.Object.map ~kind:"request"
+    (fun msg_id method_ ts payload_id payload_data ->
+      { header = { message_id = msg_id; method_; timestamp = ts };
+        payload = { id = payload_id; data = payload_data } })
+  |> Jsont.Object.mem "messageId" Jsont.string ~enc:(fun r -> r.header.message_id)
+  |> Jsont.Object.mem "method" Jsont.string ~enc:(fun r -> r.header.method_)
+  (* ... lots more fields mixed together *)
+```
+
+**Good**: Compose small, reusable codecs
+```ocaml
+let header_codec =
+  Jsont.Object.map ~kind:"header"
+    (fun message_id method_ timestamp -> { message_id; method_; timestamp })
+  |> Jsont.Object.mem "messageId" Jsont.string ~enc:(fun h -> h.message_id)
+  |> Jsont.Object.mem "method" Jsont.string ~enc:(fun h -> h.method_)
+  |> Jsont.Object.mem "timestamp" Jsont.int ~enc:(fun h -> h.timestamp)
+  |> Jsont.Object.finish
+
+let request_codec =
+  Jsont.Object.map ~kind:"request" (fun header payload -> { header; payload })
+  |> Jsont.Object.mem "header" header_codec ~enc:(fun r -> r.header)
+  |> Jsont.Object.mem "payload" payload_codec ~enc:(fun r -> r.payload)
+  |> Jsont.Object.finish
+```
+
+### Encoding Error Handling
+
+**Bad**: Silently returning empty object on error
+```ocaml
+let encode codec v =
+  match Jsont_bytesrw.encode_string codec v with
+  | Ok s -> s
+  | Error _ -> "{}"  (* Hides the error! *)
+```
+
+**Good**: Propagate or log encoding errors
+```ocaml
+let encode codec v =
+  match Jsont_bytesrw.encode_string codec v with
+  | Ok s -> Ok s
+  | Error e ->
+      Log.err (fun m -> m "JSON encode failed: %a" Jsont.Error.pp e);
+      Error (`Encode_error e)
+```
 
 ## Best Practices
 

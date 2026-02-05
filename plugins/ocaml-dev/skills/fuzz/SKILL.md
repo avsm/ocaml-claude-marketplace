@@ -1,7 +1,6 @@
 ---
 name: fuzz
-description: "OCaml fuzz testing with Crowbar for protocol implementations. Use when Claude needs to: (1) Write fuzz tests for parsers and encoders, (2) Test roundtrip invariants (parse(encode(x)) = x), (3) Verify boundary conditions and error handling, (4) Test state machines and transitions, (5) Organize fuzz test suites for large codebases"
-license: ISC
+description: "OCaml fuzz testing with Crowbar for protocol implementations. Use when Claude needs to: (1) Write fuzz tests for parsers and encoders, (2) Test roundtrip invariants (parse(encode(x)) = x), (3) Verify boundary conditions and error handling, (4) Test state machines and transitions, (5) Organize fuzz test suites for large codebases, (6) Run long-lived AFL campaigns with crow"
 ---
 
 # OCaml Fuzz Testing with Crowbar
@@ -16,7 +15,68 @@ license: ISC
 
 ## Build Configuration
 
-### Dune setup for fuzz tests
+### Simple single-file setup (per-package)
+
+For standalone packages, use one fuzz file per package:
+
+```
+ocaml-foo/
+├── lib/
+├── fuzz/
+│   ├── dune
+│   └── fuzz_foo.ml
+└── dune-project
+```
+
+**fuzz/dune:**
+
+```lisp
+(executable
+ (name fuzz_foo)
+ (modules fuzz_foo)
+ (libraries foo crowbar))
+
+; Quick check with Crowbar (no AFL instrumentation)
+(rule
+ (alias fuzz)
+ (deps fuzz_foo.exe)
+ (action
+  (run %{exe:fuzz_foo.exe})))
+
+; AFL-instrumented build target (use with --profile=afl)
+(rule
+ (alias fuzz-afl)
+ (deps
+  (source_tree input)
+  fuzz_foo.exe)
+ (action
+  (echo "AFL fuzzer built: %{exe:fuzz_foo.exe}\n")))
+```
+
+**Seed corpus**: Create `fuzz/input/` with sample inputs:
+
+```bash
+mkdir -p fuzz/input
+echo -n "" > fuzz/input/empty
+# Add representative samples as seed inputs
+```
+
+**fuzz/fuzz_foo.ml:**
+
+```ocaml
+open Crowbar
+
+let test_parse_crash_safety buf =
+  ignore (Foo.parse buf);
+  check true
+
+let () =
+  add_test ~name:"foo: parse crash safety" [ bytes ] test_parse_crash_safety
+```
+
+### Multi-module setup (large codebases)
+
+For larger projects with many modules:
 
 ```lisp
 (executable
@@ -29,7 +89,7 @@ license: ISC
   fuzz_bar))
 ```
 
-### Main entry point (`fuzz/fuzz.ml`)
+Main entry point (`fuzz/fuzz.ml`):
 
 ```ocaml
 (* Force linking of modules that register tests via side effects *)
@@ -49,6 +109,70 @@ This ensures the module is linked and its `add_test` calls execute.
 
 ---
 
+## Style Guidelines
+
+When writing fuzz tests, follow these conventions:
+
+1. **Define test functions separately** at the top of the file
+2. **Register all tests at the end** with grouped `add_test` calls
+3. **Use `bytes` directly** instead of custom generators
+4. **Use a `truncate` helper** to limit input size for protocol messages
+5. **Return `()` directly** - no need for `check true` in most cases
+6. **Add `Crypto_rng_unix.use_default ()`** at the top if crypto is used
+
+### Example structure
+
+```ocaml
+(** Fuzz tests for Foo module. *)
+
+open Crowbar
+open Fuzz_common
+
+(** Decode - must not crash on arbitrary input. *)
+let test_decode buf =
+  let buf = truncate buf in
+  let _ = Foo.decode (to_bytes buf) in
+  ()
+
+(** Roundtrip - valid values must round-trip. *)
+let test_roundtrip buf =
+  let buf = truncate buf in
+  match Foo.decode (to_bytes buf) with
+  | Error _ -> ()
+  | Ok v ->
+      let encoded = Foo.encode v in
+      match Foo.decode encoded with
+      | Error _ -> fail "re-decode failed"
+      | Ok v' -> if v <> v' then fail "roundtrip mismatch"
+
+(** Pretty-print - must not crash. *)
+let test_pp n =
+  let v = Foo.of_int (n mod 4) in
+  let _ = Format.asprintf "%a" Foo.pp v in
+  ()
+
+(* All add_test calls in run function - no side effects at module init *)
+let run () =
+  add_test ~name:"foo: decode crash safety" [ bytes ] test_decode;
+  add_test ~name:"foo: roundtrip" [ bytes ] test_roundtrip;
+  add_test ~name:"foo: pp" [ uint8 ] test_pp
+```
+
+**Main entry point (fuzz/fuzz.ml):**
+
+```ocaml
+(* Initialize crypto RNG if needed by any module *)
+let () = Crypto_rng_unix.use_default ()
+
+(* Register all fuzz tests *)
+let () =
+  Fuzz_common.run ();
+  Fuzz_foo.run ();
+  Fuzz_bar.run ()
+```
+
+---
+
 ## Test Patterns
 
 ### 1. Crash-safety test (parsers must not crash)
@@ -57,33 +181,46 @@ This ensures the module is linked and its `add_test` calls execute.
 open Crowbar
 open Fuzz_common
 
-let () =
-  add_test ~name:"foo: decode" [ bytes ] @@ fun buf ->
-  (match Foo.decode (to_bytes buf) with
-   | Ok _ -> ()
-   | Error _ -> ());
-  check true
+(** Decode - must not crash on arbitrary input. *)
+let test_decode buf =
+  let buf = truncate buf in
+  let _ = Foo.decode (to_bytes buf) in
+  ()
+
+(** Decode with exceptions - must not crash. *)
+let test_decode_exn buf =
+  let buf = truncate buf in
+  (try ignore (Foo.decode_exn (to_bytes buf)) with _ -> ());
+  ()
+
+let run () =
+  add_test ~name:"foo: decode crash safety" [ bytes ] test_decode;
+  add_test ~name:"foo: decode_exn crash safety" [ bytes ] test_decode_exn
 ```
 
 **Key points**:
-- Use `bytes` generator for arbitrary binary input
-- Match both `Ok` and `Error` branches (don't crash on either)
+- Use `bytes` generator for arbitrary binary input (produces `string` type)
+- Use `ignore` to discard results without warnings
+- Use `| exception _ -> ()` to catch any exceptions
 - `check true` signals test passed
 
 ### 2. Roundtrip test (encode/decode pairs)
 
 ```ocaml
-let () =
-  add_test ~name:"foo: roundtrip" [ bytes ] @@ fun buf ->
+(** Roundtrip - valid values must round-trip. *)
+let test_roundtrip buf =
+  let buf = truncate buf in
   match Foo.decode (to_bytes buf) with
-  | Error _ -> check true  (* Invalid input is fine *)
+  | Error _ -> ()  (* Invalid input is fine *)
   | Ok original ->
       let encoded = Foo.encode original in
       match Foo.decode encoded with
       | Error _ -> fail "re-decode failed"
       | Ok decoded ->
           if original <> decoded then fail "roundtrip mismatch"
-          else check true
+
+let run () =
+  add_test ~name:"foo: roundtrip" [ bytes ] test_roundtrip
 ```
 
 **Key points**:
@@ -94,36 +231,36 @@ let () =
 ### 3. Constrained type roundtrip (smart constructors)
 
 ```ocaml
-(* For types with range constraints like 11-bit APID (0-2047) *)
-let () =
-  add_test ~name:"apid: roundtrip" [ range 2048 ] @@ fun n ->
+(** APID roundtrip - valid values must round-trip. *)
+let test_apid_roundtrip n =
   match Apid.of_int n with
-  | None -> check (n < 0 || n > 2047)  (* Correctly rejected *)
+  | None -> if n >= 0 && n <= 2047 then fail "should accept valid value"
   | Some apid ->
       let n' = Apid.to_int apid in
       if n <> n' then fail "roundtrip mismatch"
-      else check true
+
+let run () =
+  add_test ~name:"apid: roundtrip" [ range 2048 ] test_apid_roundtrip
 ```
 
 ### 4. Boundary tests
 
 ```ocaml
-(* Test boundary values explicitly *)
-let () =
-  add_test ~name:"apid: max_valid" [ const () ] @@ fun () ->
+(** Max valid value. *)
+let test_max_valid () =
   match Apid.of_int 2047 with
   | None -> fail "2047 should be valid"
-  | Some apid ->
-      if Apid.to_int apid <> 2047 then fail "value mismatch"
-      else check true
+  | Some apid -> if Apid.to_int apid <> 2047 then fail "value mismatch"
 
-let () =
-  add_test ~name:"apid: min_valid" [ const () ] @@ fun () ->
+(** Min valid value. *)
+let test_min_valid () =
   match Apid.of_int 0 with
   | None -> fail "0 should be valid"
-  | Some apid ->
-      if Apid.to_int apid <> 0 then fail "value mismatch"
-      else check true
+  | Some apid -> if Apid.to_int apid <> 0 then fail "value mismatch"
+
+let run () =
+  add_test ~name:"apid: max_valid" [ const () ] test_max_valid;
+  add_test ~name:"apid: min_valid" [ const () ] test_min_valid
 ```
 
 **Key points**:
@@ -133,103 +270,107 @@ let () =
 ### 5. Invalid input rejection
 
 ```ocaml
-(* Values above max must be rejected *)
-let () =
-  add_test ~name:"apid: invalid_above" [ range 1000 ] @@ fun n ->
+(** Values above max must be rejected. *)
+let test_invalid_above n =
   let invalid = 2048 + n in
   match Apid.of_int invalid with
-  | None -> check true
+  | None -> ()
   | Some _ -> fail "should reject values > 2047"
 
-(* Negative values must be rejected *)
-let () =
-  add_test ~name:"apid: invalid_negative" [ range 1000 ] @@ fun n ->
+(** Negative values must be rejected. *)
+let test_invalid_negative n =
   let invalid = -(n + 1) in
   match Apid.of_int invalid with
-  | None -> check true
+  | None -> ()
   | Some _ -> fail "should reject negative values"
+
+let run () =
+  add_test ~name:"apid: invalid_above" [ range 1000 ] test_invalid_above;
+  add_test ~name:"apid: invalid_negative" [ range 1000 ] test_invalid_negative
 ```
 
 ### 6. Pretty-printer safety
 
 ```ocaml
-(* pp functions must never crash *)
-let () =
-  add_test ~name:"foo: pp" [ bytes ] @@ fun buf ->
+(** Pretty-print - must not crash. *)
+let test_pp buf =
+  let buf = truncate buf in
   match Foo.decode (to_bytes buf) with
-  | Error _ -> check true
-  | Ok v ->
-      let _ = Format.asprintf "%a" Foo.pp v in
-      check true
+  | Error _ -> ()
+  | Ok v -> let _ = Format.asprintf "%a" Foo.pp v in ()
+
+let run () =
+  add_test ~name:"foo: pp" [ bytes ] test_pp
 ```
 
 ### 7. State machine transitions
 
 ```ocaml
-(* Test valid state transitions *)
-let () =
-  add_test ~name:"key: activate Pending" [ uint8; uint8; bytes ]
-  @@ fun kid algo material_buf ->
+(** Test valid state transitions. *)
+let test_activate_pending kid algo material_buf =
   let material = to_bytes material_buf in
-  if Bytes.length material > 0 then begin
+  if Bytes.length material = 0 then ()
+  else
     let key = Key.v ~kid ~algorithm:algo ~material in
     match Key.activate key with
-    | Error _ -> check true  (* May fail if material invalid *)
+    | Error _ -> ()  (* May fail if material invalid *)
     | Ok active_key ->
         if Key.state active_key <> Key.Active then fail "wrong state"
-        else check true
-  end
-  else check true
 
-(* Test invalid state transitions return errors *)
-let () =
-  add_test ~name:"key: activate Empty fails" [ uint8; uint8 ]
-  @@ fun kid algo ->
+(** Test invalid state transitions return errors. *)
+let test_activate_empty_fails kid algo =
   let key = Key.empty ~kid ~algorithm:algo in
   match Key.activate key with
   | Ok _ -> fail "should fail on Empty key"
-  | Error (Key.Invalid_state_transition _) -> check true
+  | Error (Key.Invalid_state_transition _) -> ()
   | Error _ -> fail "wrong error type"
+
+let run () =
+  add_test ~name:"key: activate Pending" [ uint8; uint8; bytes ]
+    test_activate_pending;
+  add_test ~name:"key: activate Empty fails" [ uint8; uint8 ]
+    test_activate_empty_fails
 ```
 
 ### 8. Unit conversion roundtrips
 
 ```ocaml
-(* Test all unit conversions *)
-let () =
-  add_test ~name:"duration: ns_roundtrip" [ int64 ] @@ fun n ->
+(** Nanoseconds roundtrip. *)
+let test_ns_roundtrip n =
   let d = Duration.of_ns n in
   let n' = Duration.to_ns d in
   if n <> n' then fail "ns roundtrip mismatch"
-  else check true
 
-(* Test cross-unit conversions *)
-let () =
-  add_test ~name:"duration: us_to_ms" [ range 1000000 ] @@ fun n ->
+(** Microseconds to milliseconds conversion. *)
+let test_us_to_ms n =
   let us = Int64.of_int n in
   let d = Duration.of_us us in
   let ms = Duration.to_ms d in
   let expected = Int64.div us 1000L in
   if ms <> expected then fail "us to ms conversion failed"
-  else check true
+
+let run () =
+  add_test ~name:"duration: ns_roundtrip" [ int64 ] test_ns_roundtrip;
+  add_test ~name:"duration: us_to_ms" [ range 1000000 ] test_us_to_ms
 ```
 
 ### 9. Filestore/resource operations
 
 ```ocaml
-(* Test create/exists invariant *)
-let () =
-  add_test ~name:"filestore: create_exists" [ bytes ] @@ fun name_buf ->
+(** Test create/exists invariant. *)
+let test_create_exists name_buf =
   let name = Bytes.to_string (to_bytes name_buf) in
-  if String.length name = 0 then check true
+  if String.length name = 0 then ()
   else
     let fs = Filestore.in_memory () in
     match Filestore.create fs name with
-    | Error _ -> check true
+    | Error _ -> ()
     | Ok () ->
         if not (Filestore.exists fs name) then
           fail "created file should exist"
-        else check true
+
+let run () =
+  add_test ~name:"filestore: create_exists" [ bytes ] test_create_exists
 ```
 
 ---
@@ -295,9 +436,11 @@ fuzz/
 
 ```bash
 dune exec fuzz/fuzz.exe
+# Or use the alias:
+dune build @fuzz
 ```
 
-### With AFL (thorough fuzzing)
+### With AFL (thorough fuzzing) - Manual
 
 ```bash
 dune build fuzz/fuzz.exe
@@ -306,6 +449,36 @@ echo -n "" > fuzz/input/empty
 afl-fuzz -m none -i fuzz/input -o _fuzz -- \
   _build/default/fuzz/fuzz.exe @@
 ```
+
+### With crow (recommended for multiple targets)
+
+Use **crow** to orchestrate long-running AFL campaigns across multiple targets:
+
+```bash
+# Initialize workspace (creates dune-workspace with afl profile if needed)
+crow init
+
+# Build all fuzz targets with AFL instrumentation
+dune build --profile=afl @fuzz-afl
+
+# List discovered fuzz targets
+crow list
+
+# Start a campaign with 8 CPUs for 24 hours
+crow start --cpus=8 --duration=24h
+
+# Monitor progress
+crow status
+
+# Stop the campaign
+crow stop
+```
+
+crow automatically:
+- Discovers all `*/fuzz/dune` files with crowbar dependencies
+- Allocates CPU cores across targets (main + secondary instances)
+- Creates/updates `dune-workspace` with AFL profile if missing
+- Tracks campaign state and aggregates statistics
 
 ### Check for duplicate test names
 

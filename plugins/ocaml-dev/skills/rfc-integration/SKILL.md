@@ -1,7 +1,6 @@
 ---
-name: ocaml-rfc-integration
+name: rfc-integration
 description: Working with IETF RFCs in OCaml projects. Use when mentioning RFC numbers, implementing internet standards, adding specification documentation, or discussing protocol compliance.
-license: ISC
 ---
 
 # RFC Integration for OCaml Projects

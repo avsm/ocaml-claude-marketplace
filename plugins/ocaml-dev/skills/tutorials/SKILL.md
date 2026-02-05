@@ -1,7 +1,6 @@
 ---
-name: ocaml-tutorials
+name: tutorials
 description: Creating OCaml library tutorials using .mld documentation format with MDX executable examples. Use when discussing tutorials, documentation, .mld files, MDX, or interactive documentation.
-license: ISC
 ---
 
 # OCaml Tutorial Creation

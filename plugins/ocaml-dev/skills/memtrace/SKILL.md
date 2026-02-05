@@ -1,7 +1,6 @@
 ---
 name: memtrace
 description: "OCaml memtrace profiling for allocation hotspot analysis. Use when Claude needs to: (1) Add memtrace instrumentation to OCaml executables, (2) Run targeted benchmarks with tracing enabled, (3) Identify allocation hotspots from trace output, (4) Optimize code to reduce boxing and allocations, (5) Validate optimizations with before/after comparisons"
-license: ISC
 ---
 
 ## system_prompt

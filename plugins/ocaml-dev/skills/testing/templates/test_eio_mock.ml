@@ -25,11 +25,8 @@ let test_with_mock_flow () =
   Eio_mock.Backend.run @@ fun () ->
   let flow = Eio_mock.Flow.make "test-flow" in
   (* Set up expected reads *)
-  Eio_mock.Flow.on_read flow [
-    `Return "hello";
-    `Return "world";
-    `Raise End_of_file;
-  ];
+  Eio_mock.Flow.on_read flow
+    [ `Return "hello"; `Return "world"; `Raise End_of_file ];
   (* Your test reading from flow *)
   Alcotest.(check bool) "flow test" true true
 
@@ -41,18 +38,15 @@ let test_integration () =
   (* Real I/O operations here *)
   Alcotest.(check bool) "integration" true true
 
-let mock_suite = [
-  "mock backend", `Quick, test_with_mock_backend;
-  "mock clock", `Quick, test_with_mock_clock;
-  "mock flow", `Quick, test_with_mock_flow;
-]
+let mock_suite =
+  [
+    ("mock backend", `Quick, test_with_mock_backend);
+    ("mock clock", `Quick, test_with_mock_clock);
+    ("mock flow", `Quick, test_with_mock_flow);
+  ]
 
-let integration_suite = [
-  "real I/O", `Slow, test_integration;
-]
+let integration_suite = [ ("real I/O", `Slow, test_integration) ]
 
 let () =
-  Alcotest.run "{{PROJECT_NAME}}" [
-    "mock tests", mock_suite;
-    "integration", integration_suite;
-  ]
+  Alcotest.run "{{PROJECT_NAME}}"
+    [ ("mock tests", mock_suite); ("integration", integration_suite) ]
