@@ -146,6 +146,9 @@ project/
 ```lisp
 (lang dune 3.16)
 (name project_name)
+(source (tangled handle/project_name))   ; or (github user/repo)
+(license ISC)
+(authors "Name <email>")
 (generate_opam_files true)
 (maintenance_intent "(latest)")
 
@@ -157,6 +160,11 @@ project/
   (ocaml (>= 5.2))
   (alcotest :with-test)))
 ```
+
+**Source options**:
+- `(source (tangled handle/repo))` - Tangled hosting (default for monopam)
+- `(source (github user/repo))` - GitHub hosting
+- `(source (gitlab user/repo))` - GitLab hosting
 
 **Note**: Don't add `(version ...)` - added at release time.
 
