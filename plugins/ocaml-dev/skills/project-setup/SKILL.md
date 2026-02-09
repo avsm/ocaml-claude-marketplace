@@ -1,7 +1,6 @@
 ---
-name: ocaml-project-setup
+name: project-setup
 description: "Standards for OCaml project metadata files. Use when initializing a new OCaml library/module, preparing for opam release, setting up CI, discussing project structure, or ensuring proper .mli/.ocamlformat files exist."
-license: ISC
 ---
 
 # OCaml Project Setup
@@ -149,6 +148,9 @@ project/
 ```lisp
 (lang dune 3.21)
 (name project_name)
+(source (tangled handle/project_name))   ; or (github user/repo)
+(license ISC)
+(authors "Name <email>")
 (generate_opam_files true)
 
 (license ISC)
@@ -164,6 +166,11 @@ project/
   (ocaml (>= 5.2))
   (alcotest (and :with-test (>= 1.7.0)))))
 ```
+
+**Source options**:
+- `(source (tangled handle/repo))` - Tangled hosting (default for monopam)
+- `(source (github user/repo))` - GitHub hosting
+- `(source (gitlab user/repo))` - GitLab hosting
 
 **Note**: Don't add `(version ...)` - added at release time.
 

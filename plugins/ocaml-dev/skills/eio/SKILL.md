@@ -1,7 +1,6 @@
 ---
 name: eio
 description: "Eio concurrency patterns for OCaml applications. Use when Claude needs to: (1) Write concurrent OCaml code with Eio, (2) Handle network operations with cohttp-eio, (3) Manage resource lifecycles with switches, (4) Implement rate limiting or synchronization, (5) Create parallel operations with fibers, (6) Test async code with Eio_mock, (7) Integrate with bytesrw for streaming, or any other Eio-based concurrency tasks"
-license: ISC
 ---
 
 # Eio Concurrency
@@ -336,6 +335,150 @@ let test_network () =
 
 `Eio_mock.Backend.run` automatically detects deadlocks in tests.
 
+## Good and Bad Examples
+
+### Capability Passing
+
+**Bad**: Using global/ambient resources
+```ocaml
+let fetch_data url =
+  let now = Unix.gettimeofday () in  (* Global! *)
+  let body = Http.get url in         (* Where does network come from? *)
+  { timestamp = now; data = body }
+```
+
+**Good**: Explicit capability parameters
+```ocaml
+let fetch_data ~net ~clock url =
+  let now = Eio.Time.now clock in
+  Eio.Switch.run @@ fun sw ->
+  let body = Http.get ~sw net url in
+  { timestamp = now; data = body }
+```
+
+### Switch Scope
+
+**Bad**: Taking switch as argument when not needed
+```ocaml
+(* Why does this need a switch? Caller must manage lifetime *)
+let read_config ~sw ~fs path =
+  Eio.Path.load (fs / path)  (* No resources to manage! *)
+```
+
+**Good**: Create switch internally when needed
+```ocaml
+(* No switch needed - just reads a file *)
+let read_config ~fs path =
+  Eio.Path.load (fs / path)
+
+(* Switch needed - manages connection lifetime *)
+let with_connection ~sw ~net addr f =
+  let conn = Eio.Net.connect ~sw net addr in
+  f conn  (* conn closed when sw exits *)
+```
+
+### Buffered Reading
+
+**Bad**: No size limit allows memory exhaustion
+```ocaml
+let read_body flow =
+  Eio.Buf_read.(of_flow flow |> take_all)  (* Unbounded! *)
+```
+
+**Good**: Always specify max_size
+```ocaml
+let read_body flow =
+  Eio.Buf_read.(of_flow ~max_size:10_000_000 flow |> take_all)
+```
+
+### Condition Variables
+
+**Bad**: Single check can miss wakeups
+```ocaml
+Eio.Mutex.use_rw ~protect:false mutex (fun () ->
+  if not (check_condition ()) then  (* Single if! *)
+    Eio.Condition.await cond mutex;
+  do_work ())
+```
+
+**Good**: Loop until condition is true
+```ocaml
+Eio.Mutex.use_rw ~protect:false mutex (fun () ->
+  while not (check_condition ()) do  (* Loop handles spurious wakeups *)
+    Eio.Condition.await cond mutex
+  done;
+  do_work ())
+```
+
+### Error Handling
+
+**Bad**: Catching all Eio errors indiscriminately
+```ocaml
+let connect addr =
+  try Eio.Net.connect ~sw net addr
+  with Eio.Io _ -> failwith "connection failed"  (* Loses context! *)
+```
+
+**Good**: Match specific errors, preserve context
+```ocaml
+let connect addr =
+  try Eio.Net.connect ~sw net addr
+  with
+  | Eio.Io (Eio.Net.E (Connection_failure reason), _) ->
+      Error (`Connection_failed reason)
+  | Eio.Io (Eio.Net.E Connection_refused, _) ->
+      Error `Refused
+  | Eio.Io _ as exn ->
+      Eio.Exn.reraise_with_context exn "connecting to %s" addr
+```
+
+### Mock Testing
+
+**Bad**: Mock flow without End_of_file hangs forever
+```ocaml
+let test_read () =
+  Eio_main.run @@ fun _env ->
+  let flow = Eio_mock.Flow.make "test" in
+  Eio_mock.Flow.on_read flow [
+    `Return "data";
+    (* Missing End_of_file! Test hangs *)
+  ];
+  read_all flow
+```
+
+**Good**: Always end mock reads with End_of_file
+```ocaml
+let test_read () =
+  Eio_main.run @@ fun _env ->
+  let flow = Eio_mock.Flow.make "test" in
+  Eio_mock.Flow.on_read flow [
+    `Return "data";
+    `Raise End_of_file;  (* Required! *)
+  ];
+  read_all flow
+```
+
+### Cancellation Safety
+
+**Bad**: Critical cleanup can be cancelled
+```ocaml
+Eio.Fiber.both
+  (fun () -> may_fail ())
+  (fun () ->
+    do_work ();
+    flush_and_close connection)  (* May be cancelled mid-flush! *)
+```
+
+**Good**: Protect critical operations
+```ocaml
+Eio.Fiber.both
+  (fun () -> may_fail ())
+  (fun () ->
+    do_work ();
+    Eio.Cancel.protect @@ fun () ->
+    flush_and_close connection)  (* Completes even if cancelled *)
+```
+
 ## Common Gotchas
 
 | Issue | Problem | Solution |
@@ -356,7 +499,7 @@ let test_network () =
 | bytesrw | Streaming byte parsing | Requires copy (Cstruct→bytes) |
 | cohttp-eio | HTTP client/server | Native Eio support |
 | tls-eio | TLS connections | Use with cohttp-eio for HTTPS |
-| mirage-crypto-rng-eio | Crypto RNG | Required for crypto operations |
+| mirage-crypto-rng | Crypto RNG | Use .unix sublibrary for entropy |
 
 ## Best Practices
 
