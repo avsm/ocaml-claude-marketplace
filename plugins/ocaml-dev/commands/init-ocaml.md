@@ -73,6 +73,10 @@ Replace these in templates:
 - `{{LICENSE}}` - License identifier
 - `{{OCAML_VERSION}}` - Minimum OCaml version
 - `{{GIT_URL}}` - Full git URL based on hosting config
+- `{{SOURCE_STANZA}}` - dune source stanza based on hosting:
+  - tangled: `(source (tangled handle/{{PROJECT_NAME_KEBAB}}))`
+  - github: `(source (github user/{{PROJECT_NAME_KEBAB}}))`
+  - gitlab: `(source (gitlab user/{{PROJECT_NAME_KEBAB}}))`
 
 ## Example Usage
 

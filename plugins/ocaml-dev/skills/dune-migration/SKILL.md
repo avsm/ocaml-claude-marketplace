@@ -1,7 +1,6 @@
 ---
-name: ocaml-dune-migration
+name: dune-migration
 description: Migrating OCaml projects from ocamlbuild/topkg to dune. Use when discussing _tags files, .mllib files, pkg/pkg.ml, topkg, or build system migration.
-license: ISC
 ---
 
 # OCaml Build System Migration
