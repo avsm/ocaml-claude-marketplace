@@ -1,6 +1,7 @@
 {
   "name": "ocaml-dev",
   "description": "Comprehensive OCaml development toolkit with project setup, odoc documentation, build migration, testing, RFC integration, opam publishing, and code style assistance",
+  "version": "1.1.0",
   "author": {
     "name": "Anil Madhavapeddy",
     "email": "anil@recoil.org"
