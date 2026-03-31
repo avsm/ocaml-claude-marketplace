@@ -1,3 +1,8 @@
+---
+name: oxcaml-core
+description: "OxCaml Core library extensions including Iobuf, Time_ns, and Bigstring with unboxed and modal support"
+---
+
 # OxCaml Core Library Extensions
 
 Jane Street's Core library builds on Base with additional OxCaml-specific

@@ -1,7 +1,6 @@
 ---
 name: effects
 description: "OCaml 5 algebraic effects design patterns. Use when Claude needs to: (1) Design APIs that interact with effect-based schedulers, (2) Decide between effects vs exceptions, (3) Integrate libraries with Eio or affect, (4) Handle suspension vs error cases in streaming code, (5) Understand the layered effect design principle"
-license: ISC
 ---
 
 # OCaml 5 Effects Design

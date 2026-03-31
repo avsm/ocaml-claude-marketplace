@@ -1,3 +1,8 @@
+---
+name: oxcaml-zero-alloc
+description: "OxCaml [@zero_alloc] compile-time verification that functions perform no heap allocations"
+---
+
 # OxCaml Zero-Alloc Checking: Detailed Guide
 
 The `[@zero_alloc]` attribute enables compile-time verification that functions

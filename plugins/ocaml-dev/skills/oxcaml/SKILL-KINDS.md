@@ -1,3 +1,8 @@
+---
+name: oxcaml-kinds
+description: "OxCaml kind system for classifying types by runtime representation including layouts, kind products, and mode bounds"
+---
+
 # OxCaml Kinds: Detailed Guide
 
 Kinds classify types by their runtime representation (layout). They determine

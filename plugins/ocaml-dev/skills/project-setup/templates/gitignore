@@ -37,5 +37,4 @@ Thumbs.db
 _coverage/
 *.coverage
 
-# Local opam switch
-_opam/
+# Local opam switch (already listed above under Dune)

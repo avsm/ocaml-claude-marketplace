@@ -1,3 +1,8 @@
+---
+name: oxcaml-stack-allocation
+description: "OxCaml stack allocation patterns using local_, stack_, and exclave_ for GC-free value allocation"
+---
+
 # OxCaml Stack Allocation: Detailed Guide
 
 Stack allocation allows values to be allocated on the stack instead of the heap,

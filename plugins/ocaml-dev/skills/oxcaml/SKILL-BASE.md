@@ -1,3 +1,8 @@
+---
+name: oxcaml-base
+description: "OxCaml Base library extensions with modal wrappers, local ops, and unboxed type support across 116 modules"
+---
+
 # OxCaml Base Library Extensions
 
 Jane Street's Base library (116 modules) includes comprehensive OxCaml-specific

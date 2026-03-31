@@ -1,6 +1,6 @@
 ---
 name: fuzz
-description: "OCaml fuzz testing with Crowbar for protocol implementations. Use when Claude needs to: (1) Write fuzz tests for parsers and encoders, (2) Test roundtrip invariants (parse(encode(x)) = x), (3) Verify boundary conditions and error handling, (4) Test state machines and transitions, (5) Organize fuzz test suites for large codebases, (6) Run long-lived AFL campaigns with crow"
+description: "OCaml fuzz testing with Crowbar for protocol implementations. Use when Claude needs to: (1) Write fuzz tests for parsers and encoders, (2) Test roundtrip invariants (parse(encode(x)) = x), (3) Verify boundary conditions and error handling, (4) Test state machines and transitions, (5) Organize fuzz test suites for large codebases, (6) Run long-lived AFL campaigns with Crowbar"
 ---
 
 # OCaml Fuzz Testing with Crowbar

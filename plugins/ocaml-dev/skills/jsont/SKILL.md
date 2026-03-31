@@ -1,7 +1,6 @@
 ---
 name: jsont
 description: "JSON type-safe encoding and decoding using the OCaml jsont library. Use when Claude needs to: define typed JSON codecs for OCaml record types, parse JSON strings to OCaml values, or serialize OCaml values to JSON, or work with nested JSON structures"
-license: ISC
 ---
 
 # Jsont JSON Encoding/Decoding

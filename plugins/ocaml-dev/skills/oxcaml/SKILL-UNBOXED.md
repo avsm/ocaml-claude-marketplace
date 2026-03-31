@@ -1,3 +1,8 @@
+---
+name: oxcaml-unboxed
+description: "OxCaml unboxed types for heap-free storage including float#, int32#, unboxed records, mixed blocks, and or_null"
+---
+
 # OxCaml Unboxed Types: Detailed Guide
 
 Unboxed types store values directly without heap allocation or pointer

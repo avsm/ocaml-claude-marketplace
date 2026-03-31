@@ -1,3 +1,8 @@
+---
+name: oxcaml-modes
+description: "OxCaml modal types for locality, uniqueness, linearity, portability, and contention tracking"
+---
+
 # OxCaml Modes: Detailed Guide
 
 Modes are compile-time properties that track runtime characteristics of values.

@@ -1,3 +1,8 @@
+---
+name: oxcaml-templates
+description: "OxCaml ppx_template for generating mode-polymorphic and kind-polymorphic code variants with name mangling"
+---
+
 # OxCaml Templates (ppx_template): Detailed Guide
 
 `ppx_template` generates multiple copies of code with different modes, kinds, or

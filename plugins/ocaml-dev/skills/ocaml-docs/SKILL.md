@@ -1,7 +1,6 @@
 ---
 name: ocaml-docs
 description: "Fixing odoc documentation warnings and errors. Use when running dune build @doc, resolving reference syntax issues, cross-package references, ambiguous references, hidden fields, or @raise tags in OCaml documentation."
-license: ISC
 ---
 
 # OCaml Documentation (odoc) Skill

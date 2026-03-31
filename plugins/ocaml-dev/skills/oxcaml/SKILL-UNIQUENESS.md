@@ -1,3 +1,8 @@
+---
+name: oxcaml-uniqueness
+description: "OxCaml uniqueness types for tracking single-reference values enabling safe mutation and resource management"
+---
+
 # OxCaml Uniqueness: Detailed Guide
 
 Uniqueness tracking ensures values have exactly one reference, enabling safe

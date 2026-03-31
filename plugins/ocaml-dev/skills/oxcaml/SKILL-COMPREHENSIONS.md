@@ -1,3 +1,8 @@
+---
+name: oxcaml-comprehensions
+description: "OxCaml list and array comprehension syntax for concise collection building with filters and nested iteration"
+---
+
 # OxCaml Comprehensions: Detailed Guide
 
 Comprehensions provide concise syntax for building lists and arrays, inspired by

@@ -1,3 +1,8 @@
+---
+name: oxcaml-simd
+description: "OxCaml SIMD vector types and intrinsics for SSE/AVX high-performance parallel numeric operations"
+---
+
 # OxCaml SIMD: Detailed Guide
 
 OxCaml provides built-in SIMD vector types and intrinsics for high-performance

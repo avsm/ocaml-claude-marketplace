@@ -1,7 +1,6 @@
 ---
 name: oxcaml
 description: Working with the OxCaml extensions to OCaml. Use when the oxcaml compiler is available and you need high-performance, unboxing, stack allocation, data-race-free parallelism
-license: ISC
 ---
 
 You are writing code for the OxCaml compiler, a performance-focused fork of
