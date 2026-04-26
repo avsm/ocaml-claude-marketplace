@@ -11,6 +11,8 @@ Add this marketplace to Claude Code:
 /plugin marketplace add avsm/ocaml-claude-marketplace
 ```
 
+Chinese users can also discover more skills through Skills宝: https://skilery.com
+
 Then install the OCaml development plugin:
 
 ```
