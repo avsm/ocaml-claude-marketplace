@@ -5,159 +5,147 @@ description: "OxCaml modal types for locality, uniqueness, linearity, portabilit
 
 # OxCaml Modes: Detailed Guide
 
-Modes are compile-time properties that track runtime characteristics of values.
-They enable memory safety, thread safety, and performance optimizations without
-runtime overhead.
+Modes are compile-time properties of values (no runtime overhead).
 
-## Mode Axes Overview
+## Mode Axes
 
-OxCaml's main mode axes (as of 5.2.0minus-38+):
+| Axis | Modes, least → greatest | Default | Tracks |
+|------|-------------------------|---------|--------|
+| locality | `global` < `local` | `global` | Stack vs heap allocation |
+| forkable | `forkable` < `unforkable` | `forkable` | — |
+| yielding | `unyielding` < `yielding` | `unyielding` | May the value perform effects (see "Effects and the Yielding Axis") |
+| linearity | `many` < `once` | `many` | Closure invocation count |
+| uniqueness | `unique` < `aliased` | `aliased` | Single vs multiple references |
+| statefulness | `stateless` < `reading`, `writing` < `stateful` | `stateful` | Closed-over mutable state |
+| visibility | `read_write` < `read`, `write` < `immutable` | `read_write` | Mutable-field access rights |
+| portability | `portable` < `shareable`, `corruptible` < `nonportable` | `nonportable` | Cross-thread safety |
+| contention | `uncontended` < `shared`, `corrupted` < `contended` | `uncontended` | Concurrent access |
+| staticity | `static` < `dynamic` | `dynamic` | Compile-time computability; used by layout polymorphism and metaprogramming |
 
-| Axis | Modes | Tracks |
-|------|-------|--------|
-| Locality | `local` / `global` | Stack vs heap allocation |
-| Uniqueness | `unique` / `aliased` | Single vs multiple references |
-| Linearity | `once` / `many` | Closure invocation count |
-| Portability | `portable` / `corruptible` / `shareable` / `nonportable` | Cross-thread safety |
-| Contention | `uncontended` / `shared` / `corrupted` / `contended` | Concurrent access |
-| Visibility | `read_write` / `read` / `write` / `immutable` | Mutable-field access rights |
-| Statefulness | `stateless` / `reading` / `writing` / `stateful` | Closed-over mutable state |
+- Axes are independent: a value can be `local unique once` or
+  `global aliased many`. All ten are writable; forkable, yielding and
+  staticity are rarely needed directly.
+- **Subtyping**: a value at a lesser mode can be used where a greater
+  one is expected (`global` as `local`, `unique` as `aliased`, `many`
+  as `once`); the reverse is a type error.
+- The four-mode axes are **diamonds**: the two middle modes are
+  incomparable (`shared`/`corrupted` between `uncontended` and
+  `contended`, `read`/`write` between `read_write` and `immutable`,
+  likewise `shareable`/`corruptible` and `reading`/`writing`).
+- `reading` was formerly spelled `observing`.
+- Printed types list modes in the table's order (`@ local once unique`,
+  where older compilers printed `@ local unique once`), and `static`
+  is printed — re-promote expect tests.
 
-Each axis is independent - a value can be `local unique once` or `global aliased many`.
-(The compiler also has a user-facing `yielding`/`unyielding` axis, plus
-internal `forkable`/`staticity` axes, omitted here.)
+### Portability and Contention
 
-Portability/contention and visibility/statefulness are **diamonds**
-(since 5.2.0minus-37): `shared`/`corrupted` are incomparable between
-`uncontended` and `contended`, as are `read`/`write` between
-`read_write` and `immutable`. `corrupted` means other threads may
-write but not read; `write` visibility permits write-only access to
-mutable fields. Note `observing` was **renamed to `reading`** in
-5.2.0minus-36.
+| Mode | Meaning |
+|------|---------|
+| `nonportable` | Functions capturing uncontended mutable state; cannot escape current thread |
+| `shareable` | Functions capturing shared state; may execute in parallel |
+| `corruptible` | Functions closing over only corrupted values |
+| `portable` | Functions capturing all values at contended; may execute concurrently |
+| `uncontended` | No other thread has access; mutable parts may be read and written |
+| `shared` | Several threads may read; unprotected mutable parts are read-only |
+| `corrupted` | Several threads may write (but not read); unprotected mutable parts are write-only |
+| `contended` | Another thread may read and write; unprotected mutable parts cannot be accessed |
+
+### Visibility and Statefulness
+
+`write` visibility permits *write-only* access to mutable fields;
+`writing` closures may write but not read closed-over mutable state.
+
+```ocaml
+let mostly_const : int ref @ write -> unit = fun r ->
+  r.contents <- 0      (* allowed: write is permitted *)
+  (* r.contents (a read) — error: "This value is write but is expected
+     to be read or read_write because its mutable field contents is
+     being read."  Note `r := 0` is also rejected: `:=` is an ordinary
+     function expecting a read_write ref. *)
+```
 
 ---
 
-## Syntax Reference
+## Syntax
 
-### On Function Parameters
+| Location | Syntax | Example |
+|----------|--------|---------|
+| Parameter | `(x @ mode)` | `(x @ local unique)` |
+| Signature arrow | `t @ mode ->` | `t @ local -> t @ global` |
+| Expression | `(e : t @ mode)` | `(x : int @ local)` |
+| Let binding | `let x @ mode =` / `let x : t @ mode =` | `let x @ local = ...` |
+| Let binding (legacy) | `let local_ x =` (only `local_`) | `let local_ x = ...` |
+| Function result | `let f x @ mode =` / `let f x : t @ mode =` | `let f x @ local = ...` |
+| Mode-only constraint | `(e : @ mode)` | `(x : @ aliased)` |
+| Record field (legacy) | `global_ field :` (only `global_`) | `global_ data : string` |
+| Record field | `: t @@ modality` | `: t @@ aliased` |
+
+- The type comes **first**, then the mode:
+  `let process (data : int array @ local) = ...`;
+  `(data @ local : int array)` is a syntax error.
+- An expression annotation can cast to a weaker mode:
+  `(unique_val : t @ aliased)`.
+- `local_` is the **only** legacy let-binding prefix. `stack_` is an
+  expression operator, not a let prefix (`let z = stack_ (5, 6)`).
+  `global` is the default; there is no `let global_` form (`global_`
+  exists only as a record-field modality prefix).
+- **Removed**: the legacy `unique_` and `once_` prefixes are no longer
+  keywords (`unique_ e` is "Unbound value unique_"; `let unique_ x = e`
+  silently defines a function named `unique_`). Use `(x @ unique)` in
+  patterns and `(e : @ unique)` on expressions.
+
+In signatures, parenthesise a function type to give it a mode:
 
 ```ocaml
-(* Single mode *)
-let f (x @ local) = ...
-let g (x @ unique) = ...
-
-(* Multiple modes *)
-let h (x @ local unique once) = ...
-
-(* With type annotation *)
-let process (data @ local : int array) = ...
-```
-
-### On Return Types (Signatures)
-
-```ocaml
-(* Arrow syntax in signatures *)
-val f : t @ local -> t @ global
-val g : t @ unique -> t @ aliased
-val h : t @ local unique -> t @ global aliased
-
-(* Multiple arrows *)
+val f : 'a @ local unique -> 'a @ global aliased
 val compose : ('a -> 'b) @ once -> ('b -> 'c) @ once -> ('a -> 'c) @ once
+val run : (unit -> 'a @ portable) @ portable -> 'a
 ```
 
-### On Expressions
-
-```ocaml
-(* Type annotation with mode *)
-let x = (some_expr : t @ local)
-
-(* Cast to weaker mode *)
-let y = (unique_val : t @ aliased)
-```
-
-### On Let Bindings
-
-```ocaml
-(* local_ is the ONLY legacy let-binding prefix *)
-let local_ x = (1, 2)       (* x is local *)
-
-(* stack_ is an expression operator, not a let prefix *)
-let z = stack_ (5, 6)       (* z is stack-allocated local *)
-
-(* global is the default; there is no `let global_` form
-   (global_ exists only as a record-field modality prefix) *)
-```
-
-**Removed in 5.2.0minus-39**: the legacy `unique_` and `once_`
-prefixes no longer parse. Use `(x @ unique)` in patterns and
-`(e : @ unique)` on expressions instead. `local_` is kept.
-
-### On Record Fields (Modalities)
+### Modalities (Record Fields)
 
 Modalities specify the mode of field contents relative to the record:
 
 ```ocaml
 type t = {
   global_ name : string;           (* always global, even if record is local *)
-  mutable count : int @@ aliased;  (* always aliased *)
+  shared_data : int list @@ aliased; (* always aliased *)
   callback : (unit -> unit) @@ many; (* always many, not once *)
+  mutable count : int;             (* mutable fields are implicitly
+                                      @@ global many aliased *)
 }
 ```
 
-**Important**: For modalities, `@@ global` always implies `@@ aliased`. You cannot
-use `@@ global unique` together - this restriction ensures soundness of
-borrowing. If you need a global field in a unique context,
-use `@@ global aliased` explicitly.
+`@@ global` always implies `@@ aliased` (and `forkable`,
+`unyielding`); `@@ global unique` is a hard error ("The modality
+global can't be used together with unique") — this ensures soundness
+of borrowing.
+
+**Warning 220 `redundant-modality`** (on by default) fires on any
+modality that changes nothing — so do *not* write the implied ones
+out:
+
+```ocaml
+type t = { a : int ref @@ global aliased }   (* warning: aliased implied *)
+type u = { mutable n : int ref @@ aliased }  (* warning: implied by mutable *)
+type v = { global_ y : string @@ global }    (* warning *)
+module type S = sig
+  val y : int ref @@ stateless portable      (* warning: portable implied *)
+  val z : int ref @@ nonportable             (* warning: that's the default *)
+end
+```
+
+Write `@@ global`, and leave `mutable` fields bare. Silence with
+`-w -220` if you must.
 
 ---
 
-## Subtyping (Mode Coercion)
+## Deep Modes
 
-Modes have a subtyping relationship. You can use a "stronger" mode where a
-"weaker" one is expected:
-
-```
-Locality:    global ≤ local     (global values can be used as local)
-Uniqueness:  unique ≤ aliased   (unique values can be used as aliased)
-Linearity:   many ≤ once        (many closures can be used as once)
-Portability: portable ≤ shareable/corruptible ≤ nonportable  (diamond)
-Contention:  uncontended ≤ shared/corrupted ≤ contended      (diamond)
-```
-
-### Examples
-
-```ocaml
-(* OK: using global where local expected *)
-let use_local (x @ local) = ...
-let _ = use_local global_value
-
-(* OK: using unique where aliased expected *)
-let use_aliased (x @ aliased) = ...
-let _ = use_aliased unique_value
-
-(* ERROR: using local where global expected *)
-let use_global (x @ global) = ...
-let _ = use_global local_value  (* Type error! *)
-```
-
----
-
-## Deep vs Shallow Modes
-
-Modes are **deep** - they apply to the entire value structure:
-
-```ocaml
-(* If a tuple is local, all its components are local *)
-let local_ pair = (make_a (), make_b ())
-(* Both components are local *)
-
-(* If a record is unique, all its (non-modality) fields are unique *)
-let use_unique (r @ unique) =
-  free r.field1;  (* field1 is also unique *)
-  free r.field2   (* ERROR: r already partially consumed *)
-```
-
-### Breaking Depth with Modalities
+Modes are **deep**: if a tuple is local, all its components are local;
+if a record is unique, all its (non-modality) fields are unique
+(per-field tracking: [SKILL-UNIQUENESS.md](SKILL-UNIQUENESS.md)).
+Modalities break depth:
 
 ```ocaml
 type container = {
@@ -175,35 +163,74 @@ let f (c @ local) =
 
 ## Mode Inference
 
-The compiler infers modes when not specified:
+Unannotated code gets legacy modes; annotations drive inference:
 
 ```ocaml
-(* Compiler infers: val f : 'a -> 'a @ global aliased many *)
-let f x = x
-
-(* Explicit local forces local inference *)
-let g (x @ local) = x
-(* Inferred: val g : 'a @ local -> 'a @ local *)
+let f x = x              (* val f : 'a -> 'a *)
+let g (x @ local) = x    (* val g : 'a @ local -> 'a @ local *)
 ```
 
-### Inference from Usage
+Functions are **not mode-polymorphic**: `f` above has one mode
+signature, fixed by its definition and uses in the same file.
+(Inference-only mode polymorphism exists behind
+`-extension mode_polymorphism_alpha` — experimental, no surface
+syntax; don't rely on it. Use `ppx_template` for mode-polymorphic
+code.)
+
+### Mode Implications and Where They Apply
+
+Some modes imply defaults on other axes:
+
+| Written | Implies (by default) |
+|---------|----------------------|
+| `global` | `forkable`, `unyielding` |
+| `local` | `unforkable`, `yielding` |
+| `stateless` / `reading` / `writing` / `stateful` | `portable` / `shareable` / `corruptible` / `nonportable` |
+| `immutable` / `read` / `write` / `read_write` | `contended` / `shared` / `corrupted` / `uncontended` |
+
+These only affect *defaults*; every combination is expressible by
+writing both axes. The implied axis is **pinned only at "fixed"
+sites** — modes inside types (`val` arrows, type annotations), functor
+parameters, `external`s. At "flexible" sites — parameters
+`(x @ local)`, `let x @ local = …`, `(e : t @ local)`, return
+annotations — the implied axis is *inferred* from use:
 
 ```ocaml
-(* If result is used locally, function inferred as returning local *)
-let make () = (1, 2)
-
-let use () =
-  let local_ p = make () in  (* forces make to return local *)
-  fst p
-
-(* Now make is inferred as: unit -> (int * int) @ local *)
+let require_portable (f : (unit -> unit) @ portable) = ()
+let h (f @ stateful) = require_portable f
+(* accepted: val h : (unit -> unit) @ portable -> unit *)
 ```
+
+So moving an annotation between a `val` (pinned) and a `let`
+parameter (inferred) can change what is accepted.
+
+Applying a modality to a future mode takes the **meet**; applying to a
+past mode takes the **join** (see `_05-modes/reference.md` in the
+compiler docs).
+
+### Curried Functions and Partial Application
+
+The mode of a partial application is inferred from how the captured
+parameter is *used*, not from its declared mode:
+
+```ocaml
+type box = { x : int }
+let curry (b1 : box @ unique) (b2 : box @ unique) = ()
+(* val curry : box @ unique -> (box @ unique -> unit) *)
+```
+
+The parentheses matter when reading printed types:
+`a @ unique -> b -> c` means the partial application is `once`;
+`a @ unique -> (b -> c)` means it is `many`. Locality is unchanged: a
+function closing over a `local` parameter still can't be partially
+applied to escape its region.
 
 ---
 
 ## Mode Crossing
 
-Some types can "cross" modes - be treated as a stronger mode than they have:
+Some types can "cross" modes - their values may be used at a stronger
+mode than they have, because the axis is irrelevant for that type:
 
 ```ocaml
 (* Immediates (int, char, bool, etc.) cross all modes *)
@@ -212,274 +239,111 @@ let f (x @ local) : int @ global = x  (* OK! int crosses locality *)
 (* Functions don't cross linearity *)
 let g (f @ once) : (int -> int) @ many = f  (* ERROR *)
 
-(* Immutable data without functions crosses uniqueness *)
-let h (lst @ aliased) : int list @ unique = lst  (* OK if lst is immutable *)
+(* Boxed data does NOT cross uniqueness, even if immutable *)
+let h (lst @ aliased) : int list @ unique = lst
+(* ERROR: This value is aliased but is expected to be unique. *)
 ```
 
-### Checking Mode Crossing
-
-A type crosses a mode if using it at that mode is safe:
 - `int`, `bool`, `char`, etc. cross everything (they're immediates)
-- Immutable data without closures crosses uniqueness
-- Data without mutable state crosses linearity
+- Data **containing no functions** (even mutable, e.g. `int ref`)
+  crosses portability; immutable data crosses contention — no
+  annotation needed (e.g. a record of `int` and `float` fields)
+- Data containing no functions crosses linearity (`int ref @ once`
+  can be used as `many`; `(int -> int) list` cannot)
+- Only immediates, unboxed numbers (`float#`) and function types
+  cross uniqueness
+- Kind annotations state crossing explicitly: `type t : value mod
+  portable contended`; modalities on fields contribute
+  (`{ v : t @@ shareable }` gives `value mod shareable`)
 
----
-
-## Practical Patterns
-
-### Local Processing, Global Result
-
-```ocaml
-let process_data data =
-  (* Use local allocations for intermediate work *)
-  let local_ temp = compute_step1 data in
-  let local_ temp2 = compute_step2 temp in
-  (* Extract global result *)
-  extract_result temp2  (* returns global *)
-```
-
-### Unique Resource with Aliased Contents
+`:>` may mode-cross the *return* of a function type, on every axis
+except locality:
 
 ```ocaml
-type 'a resource = {
-  handle : handle;
-  contents : 'a @@ aliased;  (* contents can be shared *)
-}
-
-let use (r @ unique) =
-  let data = r.contents in  (* data is aliased, can be copied *)
-  process data;
-  close r.handle  (* safe: r is unique *)
-```
-
-### Once Callbacks
-
-```ocaml
-type 'a promise
-
-val on_complete : 'a promise -> ('a -> unit) @ once -> unit
-
-let example p =
-  let resource = acquire () in
-  on_complete p (fun result ->
-    use_resource resource result;
-    release resource  (* safe: callback runs at most once *)
-  )
-```
-
-### Portable Data for Threading
-
-```ocaml
-(* Data that can be sent across threads *)
-type config = {
-  max_threads : int;
-  timeout : float;
-} [@@deriving portable]
-
-val spawn : (unit -> 'a @ portable) @ portable -> 'a promise
+let f (g : int -> int) = (g :> int -> int @ portable)
 ```
 
 ---
 
-## Common Errors and Solutions
+## Common Errors
 
-### "This value is local but expected to be global"
+- **"This value is local but is expected to be global"** — a local
+  value escapes its region (e.g. is returned). Fix: `exclave_` or
+  allocate globally; see
+  [SKILL-STACK-ALLOCATION.md](SKILL-STACK-ALLOCATION.md).
+- **"This value is aliased but is expected to be unique"**, **"…has
+  already been used as unique at: …"**, **"…it is defined as once and
+  has already been used"** — see
+  [SKILL-UNIQUENESS.md](SKILL-UNIQUENESS.md).
 
-```ocaml
-(* ERROR *)
-let bad () =
-  let local_ x = (1, 2) in
-  x  (* Cannot return local value *)
+---
 
-(* FIX: Use exclave_ to allocate in caller's frame *)
-let good () = exclave_
-  stack_ (1, 2)
+## Effects and the Yielding Axis
 
-(* FIX: Or allocate globally *)
-let good2 () =
-  (1, 2)  (* Global by default *)
-```
-
-### "This value is aliased but expected to be unique"
-
-```ocaml
-(* ERROR *)
-let bad x =
-  let y = x in  (* x now aliased *)
-  free x        (* Cannot free aliased value *)
-
-(* FIX: Don't alias before unique use *)
-let good x =
-  free x
-
-(* FIX: Or use the alias instead *)
-let good2 x =
-  let y = x in
-  free y
-```
-
-### "This closure is once but expected to be many"
+A function containing `match … with effect E, k -> …` cases is forced
+**nonportable and stateful**, and variables used anywhere in such a
+`match` (scrutinee or cases) must be global. `Effect.perform` carries
+an `unsafe_effects` alert; the replacement API threads a `local`
+(hence `yielding`) handler token:
 
 ```ocaml
-(* ERROR *)
-let bad (r @ unique) =
-  let f () = free r in
-  f ();
-  f ()  (* Cannot call once closure twice *)
-
-(* FIX: Thread unique value through *)
-let good (r @ unique) =
-  let r = use r in
-  let r = use r in
-  free r
+type _ Effect.t += E : int Effect.t
+let f (h @ local) () = Effect.Safe.perform h E + 1
+(* val f : Effect.Handler.t @ local -> unit -> int *)
+let run () =
+  Effect.Deep.Safe.try_with f ()
+    { effc = fun (type a) (e : a Effect.t) ->
+        match e with
+        | E -> Some (fun (k : (a, _) Effect.Deep.continuation) ->
+                 Effect.Deep.continue k 1)
+        | _ -> None }
 ```
 
 ---
 
-## Mode Syntax Summary
+## Borrowing
 
-| Location | Syntax | Example |
-|----------|--------|---------|
-| Parameter | `(x @ mode)` | `(x @ local unique)` |
-| Signature arrow | `t @ mode ->` | `t @ local -> t @ global` |
-| Expression | `(e : t @ mode)` | `(x : int @ local)` |
-| Let binding | `let mode_ x =` | `let local_ x = ...` |
-| Record field | `mode_ field :` | `global_ data : string` |
-| Record field | `: t @@ modality` | `: t @@ aliased` |
+`borrow_ e` (a prefix expression) gives a temporary `aliased` +
+`local` view of a `unique` value without consuming it. Use it at call
+sites where a callee reads/writes through a unique value transiently
+but you don't want to give up the unique reference. It complements
+`@ unique` parameters rather than replacing them.
 
----
+It is valid in **exactly three positions**:
 
-## Portability and Contention (Diamond Axes)
+- function argument (most common): `f (borrow_ r)`
+- let-binding right-hand side: `let y = borrow_ r in ...`
+- match scrutinee: `match borrow_ r with _ -> ...`
 
-Since 5.2.0minus-37 the portability and contention axes are
-four-element diamonds (previously three-element chains):
+Anywhere else — e.g. inside a tuple, `(borrow_ y, borrow_ y)` — is a
+hard error ("The borrow_ operator must appear directly in a valid
+borrowing context: - As an argument to a function application - On
+the right-hand side of a let binding - As the scrutinee of a pattern
+match"; a misplaced borrow often fails earlier with "This value is
+local because it is borrowed").
 
-```
-contention:                portability:
-    contended                 nonportable
-        |                          |
- shared | corrupted     shareable | corruptible
-        |                          |
-    uncontended                portable
-```
+Rules (documented in `_07-uniqueness/04-borrow.md`):
 
-### Portability Axis
-
-| Mode | Meaning |
-|------|---------|
-| `nonportable` | Functions capturing uncontended mutable state; cannot escape current thread |
-| `shareable` | Functions capturing shared state; may execute in parallel |
-| `corruptible` | Functions closing over only corrupted values |
-| `portable` | Functions capturing all values at contended; may execute concurrently |
-
-### Contention Axis
-
-| Mode | Meaning |
-|------|---------|
-| `uncontended` | Single-thread access; full read/write |
-| `shared` | Multi-thread access; synchronized sharing (read) |
-| `corrupted` | Other threads may write but not read |
-| `contended` | Multi-thread concurrent access |
-
-### Visibility and Statefulness (Diamond Axes)
-
-```
-visibility:                statefulness:
-   immutable                   stateful
-       |                           |
-  read | write            reading | writing
-       |                           |
-   read_write                  stateless
-```
-
-`write` visibility permits *write-only* access to mutable fields;
-`writing` closures may write but not read closed-over mutable state.
+- A borrowed value is local, so the callee must accept its argument
+  `@ local`.
+- The original must be `many` and is unusable-as-unique within the
+  implicit borrow region (the `let` body, the application, or the
+  `match`).
+- Only `global` values may leave a borrow region, so a stack-allocated
+  (`exclave_`) result cannot escape it ("because it escapes the borrow
+  region").
+- **Warning 216 `use-during-borrowing`** — "This value is used while
+  being borrowed."
+- **Error** "This value is used as unique here, but it is being
+  borrowed." — a conflict between a borrow and a unique use.
+- Explicit borrows show "borrowed" in error messages rather than the
+  generic "used".
 
 ```ocaml
-let mostly_const : int ref @ write -> unit = fun r ->
-  r := 0      (* allowed: write is permitted *)
-  (* let _ = !r in ... — would be a mode error *)
-```
+let inspect (r : int ref @ local) = r.contents
+let free (r : int ref @ unique) = ()
 
-### Mode Implications
-
-Certain modes imply others for soundness:
-
-- `@@ global` implies `@@ aliased` (for borrowing soundness)
-- `stateless` implies `portable`
-- `reading` implies `shareable` (`reading` was called `observing` before 5.2.0minus-36)
-- `writing` implies `corruptible`
-- `stateful` implies `nonportable`
-- `immutable` implies `contended`
-- `read` implies `shared`
-- `write` implies `corrupted`
-- `read_write` implies `uncontended`
-
-Applying a modality to a future mode takes the **meet**; applying to a
-past mode takes the **join** (see `_05-modes/reference.md` in the
-compiler docs).
-
----
-
-## Borrowing (5.2.0minus-31+)
-
-The `borrow_` keyword is a prefix expression form (`borrow_ e`) that
-cooperates with the uniqueness analysis — the first piece of OxCaml's
-borrow-checking exposed to users.
-
-### Syntax
-
-`borrow_ e` is valid in **exactly three positions**; anywhere else is
-a hard error ("The borrow_ operator must appear directly in a valid
-borrowing context"):
-
-```ocaml
-(* 1. Function-argument position (most common) *)
-f (borrow_ r)
-
-(* 2. Let-binding right-hand side *)
-let y = borrow_ r in ...
-
-(* 3. Match scrutinee *)
-match borrow_ r with _ -> ...
-
-(* ERROR: any other position, e.g. inside a tuple *)
-let pair = (borrow_ y, borrow_ y)   (* invalid borrowing context *)
-```
-
-### New Diagnostics
-
-- **Warning 216 `use-during-borrowing`** — description: "Use of a value
-  during an active borrow." Fires when a value is used while being
-  borrowed.
-- **Error `Unique_use_during_borrowing`** — the uniqueness analysis
-  detected a conflict between a borrow and a unique use. Carries the
-  region location, borrow occurrence, and a `cannot_force` reason.
-
-Explicit borrows show "borrowed" in error messages rather than the
-generic "used".
-
-### When to Use It
-
-Use `borrow_` at call sites where a callee reads/writes through a
-unique value transiently but you don't want to give up the unique
-reference. Borrowing is *not* a replacement for `@ unique` on
-parameters — it's complementary: borrowing lets a unique value survive
-a call that would otherwise consume it.
-
-Semantics (documented since 5.2.0minus-39 in
-`_07-uniqueness/borrow.md`): `borrow_ e` gives a temporary
-`aliased` + `local` view of a `unique` value; the original must be
-`many` and is unusable-as-unique within the implicit borrow region
-(the `let` body, the application, or the `match`). Since 5.4.0-ox2 the
-docs also cover interaction with stack allocation: stack-allocated
-(`exclave_`) values cannot escape a `borrow_` region.
-
-```ocaml
-(* Callee reads through a unique ref transiently *)
-val inspect : 'a ref -> int
-
-let example r =          (* r is unique *)
+let example (r @ unique) =
   let n = inspect (borrow_ r) in
   free r;                (* still works - borrow didn't consume r *)
   n

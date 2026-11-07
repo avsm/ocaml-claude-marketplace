@@ -14,8 +14,8 @@ how values are stored, passed, and what operations are valid.
 any                              (* Top kind - any layout *)
 ├── value_or_null                (* Standard OCaml values, possibly null *)
 │   └── value                    (* Standard OCaml boxed values *)
-│       └── immediate            (* Unboxed integers, no GC scanning *)
-│           └── immediate64      (* Immediate on 64-bit only *)
+│       └── immediate64          (* Immediate on 64-bit only *)
+│           └── immediate        (* Tagged integers, no GC scanning *)
 ├── void                         (* Zero size — unit# lives here *)
 ├── float64                      (* Unboxed 64-bit float *)
 ├── float32                      (* Unboxed 32-bit float *)
@@ -28,41 +28,53 @@ any                              (* Top kind - any layout *)
 └── vec128 / vec256 / vec512     (* SIMD vectors *)
 ```
 
-Note: as of 5.2.0minus-31, all non-`value` base kinds listed above
-mode-cross **everything** (they behave as `mod everything`, which
-includes externality). (The `_internal` opt-out suffix that briefly
-existed was removed in 5.2.0minus-38 — there is no unmoded form.)
+Subkinding: a more specific kind can be used where a more general one
+is expected (`immediate ≤ immediate64 ≤ value ≤ any`, `float64 ≤ any`,
+`bits32 ≤ any`, etc.). Given `val f : ('a : value). 'a -> 'a`, `f 42`
+is accepted: `int` is `immediate`, which ≤ `value`.
 
-## Basic Kind Annotations
+### What Types Have Which Kinds?
 
-### On Type Definitions
+| Kind | Types | GC Scanned | Size |
+|------|-------|------------|------|
+| `value` | `string`, `'a list`, `'a option`; `float` (but special float array optimization); `int32`, `int64`, `nativeint` (boxed); `int8# array`, `int16# array`, `int# array` (specialized subkind) | Yes | 1 word |
+| `immediate` | `int`, `char`, `bool`, `unit` | No | 1 word |
+| `float64` | `float#` | No | 8 bytes |
+| `float32` | `float32_u` | No | 4 bytes |
+| `bits8` | `int8#`, `char#`, `bool#`, `uint8_u` | No | 1 byte |
+| `bits16` | `int16#`, `uint16_u` | No | 2 bytes |
+| `bits32` | `int32_u`, `uint32_u` | No | 4 bytes |
+| `bits64` | `int64_u`, `uint64_u`, block indices `('a, 'b) idx_imm` / `idx_mut` / `idx_atomic` | No | 8 bytes |
+| `word` | `nativeint_u`, `unativeint_u` | No | native |
+| `untagged_immediate` | `int#` | No | native |
+| `void` | `unit#` | - | 0 |
+| `vec128` | `int8x16#`, etc. | | |
+| `vec256` | `int8x32#`, etc. | | |
+| `vec512` | `int8x64#`, etc. (`-extension simd_beta`) | | |
+| `any` | (any of above); `'a array#`, `'a iarray#` (type-level only) | Varies | Varies |
+
+`int64_u`, `int32_u`, `nativeint_u` and `float32_u` are predefined
+types and the only spelling: the `#`-suffixed names `int64#` etc. no
+longer exist. See [SKILL-UNBOXED.md](SKILL-UNBOXED.md).
+
+## Kind Annotations
 
 ```ocaml
-(* Abstract type with specific layout *)
-type t : float64
+type t : float64                                (* abstract type *)
+type my_float : float64 = float#                (* alias preserving layout *)
 
-(* Type alias preserving layout *)
-type my_float : float64 = float#
-
-(* Parameterized with kind constraint *)
+(* On type parameters *)
 type ('a : value) boxed_list = 'a list
-type ('a : float64) float_pair = 'a * 'a
-```
-
-### On Type Parameters
-
-```ocaml
-(* Single parameter *)
+type ('a : float64) float_pair = #('a * 'a)   (* boxed tuples need value *)
 type ('a : bits32) container = { value : 'a }
+type ('a : value, 'b : float64) mixed = { boxed : 'a; unboxed : 'b }
 
-(* Multiple parameters with different kinds *)
-type ('a : value, 'b : float64) mixed = {
-  boxed : 'a;
-  unboxed : 'b;
-}
+(* On locally abstract types *)
+let process (type a : float64) (x : a) : a = x
+let example () = process #3.14  (* a instantiated to float# *)
 ```
 
-### In Signatures
+In signatures:
 
 ```ocaml
 (* Kind-annotated polymorphism *)
@@ -73,71 +85,93 @@ val id_float : ('a : float64). 'a -> 'a
 val convert : ('a : bits32) ('b : bits64). 'a -> 'b
 ```
 
-### On Locally Abstract Types
+`(type : k)` is an anonymous abstract type of kind `k`, usable where a
+type is expected: `type a = (type : float64)`.
+
+### Kind Inference
 
 ```ocaml
-let process (type a : float64) (x : a) : a = x
+let f x = x              (* 'a inferred as value (default): 'a -> 'a *)
+let g (x : float#) = x   (* inferred from context: float# -> float# *)
 
-let example () =
-  process #3.14  (* a instantiated to float# *)
+(* Flexible: infers kind from usage — x must have kind float64 *)
+let f x = (x : float#)
+(* Rigid: kind specified at binding — a is exactly float64 *)
+let g (type a : float64) (x : a) = x
+
+(* A container constrains its element kind; a function over it
+   inherits the constraint: 'a implicitly has kind value *)
+type ('a : value) cell = { contents : 'a }
+let get (b : 'a cell) : 'a = b.contents
 ```
 
 ---
 
 ## Kind Abbreviations
 
-Common kind patterns have shorthand names:
-
-```ocaml
-value           (* Boxed OCaml values, GC-managed *)
-immediate       (* Tagged integers: int, char, bool, etc. *)
-immediate64     (* Immediate on 64-bit, boxed on 32-bit *)
-mutable_data    (* records with mutable fields (glossed; the real
-                   definition crosses several mode axes, not contention) *)
-immutable_data  (* immutable non-float data; crosses contention too *)
-```
+- `value` — boxed OCaml values, GC-managed; defined as
+  `value_or_null non_null separable`
+- `immediate` — tagged integers: `int`, `char`, `bool`, etc.; it is
+  `value non_pointer mod everything`
+- `immediate64` — immediate on 64-bit, boxed on 32-bit; it is
+  `value non_pointer64 mod global aliased many contended portable
+  forkable unyielding immutable stateless external64`
+- `mutable_data` — records with mutable fields; it is `value non_float
+  mod many portable forkable unyielding stateless` (does not cross
+  contention)
+- `immutable_data` — immutable non-float data; it is `value non_float
+  mod many contended portable forkable unyielding immutable stateless`
 
 ### Kind Declarations (`kind_` keyword)
 
-Define a reusable kind alias with `kind_`. **In 5.2.0minus-31+ this is
-`kind_`** — the old `kind_abbrev_` keyword has been renamed:
+Define a reusable kind alias with `kind_` (the old keyword
+`kind_abbrev_` has been renamed — rename it in old code):
 
 ```ocaml
 kind_ my_int_kind = bits32 mod external_
 ```
 
-If you're maintaining code that still says `kind_abbrev_`, rename it.
-Consumers of `compiler-libs` should note that the parsetree
-constructors are now `Psig_jkind` / `Pstr_jkind` carrying a
-`jkind_declaration` record.
+For `compiler-libs` consumers the parsetree constructors are
+`Psig_jkind` / `Pstr_jkind`, carrying a `jkind_declaration` record.
 
-### Non-`value` Base Kinds Cross Everything (5.2.0minus-31+)
+### Non-`value` Base Kinds: External, but Not `mod everything`
 
-The following base kinds **implicitly mode-cross all axes** (including
-externality, so write-barrier elision applies automatically):
-
-`bits8`, `bits16`, `bits32`, `bits64`, `float32`, `float64`,
-`untagged_immediate`, `vec128`, `vec256`, `vec512`, `void`, `word`.
-
-There is no opt-out: the `_internal` suffix (e.g. `bits64_internal`)
-that existed briefly in minus-31..37 was **removed in 5.2.0minus-38**.
-The combination "non-`value` layout, not `mod external_`" is not
+The base kinds `bits8`, `bits16`, `bits32`, `bits64`, `float32`,
+`float64`, `untagged_immediate`, `vec128`, `vec256`, `vec512`, `void`,
+`word` **imply externality** (`bits64 mod external_` is just
+`bits64`), so write-barrier elision applies automatically. There is no
+opt-out: the `_internal` suffix (e.g. `bits64_internal`) no longer
+exists, and "non-`value` layout, not `mod external_`" is not
 expressible.
 
-### Scannable Axes (semantics changed in 5.2.0minus-39)
+They do **not** imply the *modal* axes. An abstract `type t : float64`
+does not cross contention or portability; write `float64 mod
+everything` for that. (Concrete types such as `float#` and `int64_u`
+*do* cross everything — their declared kind is `… mod everything`.)
+
+```ocaml
+type t : float64
+let f (x : t @ contended) : t @ uncontended = x
+(* Error: This value is contended but is expected to be uncontended. *)
+
+type u : float64 mod everything
+let g (x : u @ contended) : u @ uncontended = x          (* ok *)
+let h (x : float# @ contended) : float# @ uncontended = x  (* ok *)
+```
+
+### Scannable Axes
 
 Scannable axes (`non_pointer`, `non_pointer64`, `non_float`,
 `separable`, `maybe_separable`, plus nullability) are written after a
-layout: `value non_pointer`. Since 5.2.0minus-39 (#5921), a written
-axis takes the **meet** with the layout's existing bound — it can only
-*lower* the axis, never raise it. `value maybe_separable` therefore
-equals `value`, and `k mod axis` is equivalent to `k axis` (the `mod`
-spelling for scannable axes is deprecated). `value` itself is defined
-as `value_or_null non_null separable`; `immediate` is
-`value non_pointer`.
+layout: `value non_pointer`. A written axis takes the **meet** with
+the layout's existing bound — it can only *lower* the axis, never
+raise it. `value maybe_separable` therefore equals `value`, and
+`k mod axis` is equivalent to `k axis` (prefer the postfix spelling
+for scannable axes; `value mod non_float` still parses silently and
+prints back as `value non_float`).
 
-Since 5.4.0-ox2, scannable axes can also be written on **abstract
-kinds** and on arbitrary kind expressions:
+Scannable axes can also be written on **abstract kinds** and on
+arbitrary kind expressions:
 
 ```ocaml
 module type S = sig
@@ -145,34 +179,51 @@ module type S = sig
   val get : ('a : k separable). 'a array -> 'a
 end
 
-type t4 : (value & value) non_pointer     (* parses; warning 184 if no
-                                             effect — 183/184 are on by
-                                             default post-ox2 *)
+type t4 : (value & value) non_pointer     (* parses; warning 184 *)
 type t5 : (value mod global) non_pointer
 ```
 
-### What Types Have Which Kinds?
+### Addressable Kinds
 
-| Type | Kind |
-|------|------|
-| `int`, `char`, `bool`, `unit` | `immediate` |
-| `float` | `value` (but special float array optimization) |
-| `string`, `'a list`, `'a option` | `value` |
-| `int32`, `int64`, `nativeint` | `value` (boxed) |
-| `float#` | `float64` |
-| `int32#` | `bits32` |
-| `int64#` | `bits64` |
-| `float32#` | `float32` |
-| `nativeint#` | `word` |
-| `int8#`, `char#` | `bits8` |
-| `int16#` | `bits16` |
-| `bool#` | `bits8` |
-| `unit#` | `void` |
-| `int8x16#`, etc. | `vec128` |
-| `int8x32#`, etc. | `vec256` |
-| `int8# array` | `value` (specialized subkind) |
-| `int16# array` | `value` (specialized subkind) |
-| `int# array` | `value` (specialized subkind) |
+`addressable` is a postfix kind modifier: a kind whose *boxed form can
+have a pointer taken into it*. Already addressable: `value` and its
+subkinds, `bits64`, `word`, `vec128/256/512`, and products of
+addressable kinds. Not addressable: `bits8`, `bits16`, `bits32`,
+`float32`, `float64`, `untagged_immediate`, `void`.
+
+```ocaml
+type t8 : bits8 addressable
+type t : any addressable
+kind_ k2 = bits8 addressable
+type ('a : any) ptr                 (* your own type *)
+val ptr_of : ('a : any addressable). 'a box -> 'a ptr
+```
+
+`bits8` and `bits8 addressable` are incomparable; `k addressable` on
+an already-addressable kind gives warning 183. Nothing in the stdlib
+uses the modifier yet and it does not change runtime representation.
+
+### Kind-Annotation Warnings (all on by default)
+
+| Warning | Fires when | Example |
+|---------|------------|---------|
+| 181 `imprecise-kind-annotation` | an annotation on a type variable is weaker than what is inferred | `type ('a : any) w = 'a list` — "annotated with kind `any' but was inferred to have kind `value_or_null'" |
+| 183 `redundant-kind-modifier` | a scannable-axis modifier is already implied | `value maybe_separable`, `immediate non_null`, `value addressable` |
+| 184 `ignored-kind-modifier` | a scannable-axis modifier has no effect on that layout | `float64 non_null`, `(value & value) non_pointer` |
+| 211 `redundant-modifier` (was `mod-by-top`) | a `mod` bound is the default for its axis, or implied by another | `value mod local`; `value mod global aliased` ("implied by global") |
+| 220 `redundant-modality` | a modality repeats or is overridden on one axis | `val x : int @@ portable portable` |
+
+- 181 hits array code often: `('a : any) … 'a array` is inferred as
+  `any separable`, so write `('a : any mod separable)`.
+- 211 implications: `global` ⇒ `aliased`, `forkable`, `unyielding`;
+  `stateless` ⇒ `portable`; `immutable` ⇒ `contended`. Spelling out
+  the full expansion of `mutable_data`/`immutable_data`/`immediate64`
+  therefore warns — use the abbreviation.
+- The mnemonic `mod-by-top` is **gone**: `[@@@warning "-mod-by-top"]`
+  now parses as single-letter warning classes (with an
+  `ocaml_deprecated_cli` alert) and silently toggles unrelated
+  warnings. Use `-211` (works on both old and new compilers) or
+  `-redundant-modifier`.
 
 ---
 
@@ -181,110 +232,73 @@ type t5 : (value mod global) non_pointer
 Unboxed tuples have product kinds:
 
 ```ocaml
-(* Unboxed pair of float# and int32# *)
 type pair : float64 & bits32
-
-(* Three-element product *)
 type triple : float64 & float64 & bits32
+type ('a : float64 & bits32) wrapper = { data : 'a }   (* as parameter *)
 
-(* In type parameters *)
-type ('a : float64 & bits32) wrapper = { data : 'a }
-```
-
-### Creating Product Values
-
-```ocaml
-let p : #(float# * int32#) = #(#3.14, #42l)
-(* p has kind float64 & bits32 *)
+let p : #(float# * int32_u) = #(#3.14, #42l)   (* kind float64 & bits32 *)
 ```
 
 ---
 
 ## Mode Bounds on Kinds
 
-Kinds can include mode constraints:
-
 ```ocaml
-(* Type that must be global *)
+(* Type that crosses locality: a local value may be used as global *)
 type t : value mod global
 
 (* Type that is always portable *)
 type portable_t : value mod portable
 
-(* Type that crosses locality *)
-type crosser : value mod global local
+(* Several bounds at once (at most one per axis — two bounds on one
+   axis is an error: "The locality axis has already been specified.") *)
+type crosser : value mod global portable contended
 ```
-
-### Mode Bound Meanings
 
 | Bound | Meaning |
 |-------|---------|
-| `mod global` | Cannot be local |
+| `mod global` | Crosses locality (`local` usable as `global`) |
 | `mod portable` | Safe for cross-thread |
 | `mod external_` | GC ignores it (immediate) |
 | `mod immutable` | No mutable fields |
 
-(`non_float` is a *scannable axis*, not a mode bound — write it
-postfix as `value non_float`; the `mod non_float` spelling is
-deprecated. See "Scannable Axes" above.)
+A bound that is the default for its axis (`mod local`, `mod
+uncontended`) or implied by another (`mod global aliased`) triggers
+warning 211 `redundant-modifier`. `non_float` is a *scannable axis*,
+not a mode bound — write it postfix as `value non_float`
+(`mod non_float` is an older spelling of the same thing).
 
 ---
 
 ## Computing Kinds of User Types
 
-### Records
-
 ```ocaml
-(* Immutable record with value fields *)
+(* Records *)
 type point = { x : int; y : int }
-(* Kind: immutable_data with x, y *)
-
-(* Mutable record *)
-type counter = { mutable count : int }
-(* Kind: mutable_data with count *)
-
-(* Unboxed record *)
+(* immutable_data with int with int, i.e. immutable_data *)
+type counter = { mutable count : int }       (* mutable_data *)
 type vec2 = #{ x : float#; y : float# }
-(* Kind: float64 & float64 mod everything *)
-```
+(* unboxed record: float64 & float64 mod everything *)
 
-### Variants
+(* Variants *)
+type color = Red | Green | Blue              (* all-constant: immediate *)
+type 'a option = None | Some of 'a           (* immutable_data with 'a *)
+type 'a ref = { mutable contents : 'a }      (* mutable_data with 'a *)
 
-```ocaml
-(* All-constant constructors *)
-type color = Red | Green | Blue
-(* Kind: immediate *)
-
-(* With data *)
-type 'a option = None | Some of 'a
-(* Kind: immutable_data with 'a *)
-
-(* Mutable field in constructor *)
-type 'a ref = { mutable contents : 'a }
-(* Kind: mutable_data with contents *)
-```
-
-### Tuples
-
-```ocaml
-(* Boxed tuple *)
+(* Tuples *)
 type pair = int * int
-(* Kind: immutable_data with int, int *)
-
-(* Unboxed tuple *)
-type upair = #(int * int)
-(* Kind: value & value mod everything *)
+(* immutable_data with int with int, i.e. immutable_data *)
+type upair = #(int * int)                    (* immediate & immediate *)
 ```
 
 ---
 
-## Implicit Kinds in Signatures and Structures (5.2.0minus-31+)
+## Implicit Kinds in Signatures and Structures
 
 A floating attribute `[@@@implicit_kind: ...]` declares that specific
-type-variable names default to a chosen kind. The goal is to avoid
-repeating the same `('a : k)` annotation on every declaration.
-Originally signatures-only; since 5.4.0-ox2 it also works in
-structures and at the module toplevel (#6114).
+type-variable names default to a chosen kind, to avoid repeating the
+same `('a : k)` annotation on every declaration. It works in
+signatures, in structures and at the module toplevel.
 
 ```ocaml
 module type S = sig
@@ -303,9 +317,15 @@ module type S = sig
 end
 ```
 
-### Multiple Bindings in One Attribute
+```ocaml
+module M = struct
+  [@@@implicit_kind: ('elt : bits64)]
+  let f : 'elt -> 'elt array = fun x -> [| x |]
+end
+(* val f : ('elt : bits64). 'elt -> 'elt array *)
+```
 
-Use product syntax:
+Multiple bindings in one attribute use product syntax:
 
 ```ocaml
 [@@@implicit_kind: ('a : immediate) * ('b : immediate)]
@@ -313,7 +333,7 @@ Use product syntax:
 val swap : 'a * 'b -> 'b * 'a
 ```
 
-### Rules and Limits
+Rules and limits:
 
 - **Can't override per-declaration**: a variable declared with an
   implicit kind must have that kind where used. Narrowing or
@@ -321,81 +341,137 @@ val swap : 'a * 'b -> 'b * 'a
 - **Inherited by nested signatures**: a `module type` or `sig` *within*
   the same module type sees the outer `[@@@implicit_kind: ...]`
   declaration.
-- **Re-declaration is allowed** (since 5.2.0minus-39, #5980): a later
+- **Re-declaration is allowed**: a later
   `[@@@implicit_kind: ('a : k2)]` shadows an earlier one for
-  subsequent items. (It used to be an error.)
+  subsequent items.
 - **No propagation through `include`**: if `T` does `include S`, the
   implicit kinds declared in `S` do **not** carry over into `T`.
   Implicit kinds are lexical defaults, not part of the interface.
 - **`constraint` clauses**: implicit kinds apply, so a `constraint` on
   `'elt` respects the declared kind. In fact, implicit kinds are
   currently the only way to set a constraint to certain kind values.
-- **Structures**: allowed since 5.4.0-ox2 (#6114); before that,
-  signatures only.
-
-### When to Reach for It
+- **GADTs**: an implicit `('a : any)` works for a GADT whose
+  constructors instantiate `'a` at different layouts.
 
 Use implicit kinds when a signature is dominated by functions taking
-one or two named type variables at a non-`value` kind — typical for
-libraries specialised to `word`, `bits64`, or an immediate. It's not
-meant as a replacement for `ppx_template` for kind-polymorphic code
-that also needs a `value` instantiation.
+one or two named type variables at a non-`value` kind (libraries
+specialised to `word`, `bits64`, or an immediate). It is not a
+replacement for `ppx_template` for kind-polymorphic code that also
+needs a `value` instantiation.
 
 ---
 
-## Fields and Constructor Args of Kind `any` (UNRELEASED, 5.2.0minus-40+)
+## Fields and Constructor Args of Kind `any` (`layouts_beta`)
 
 Under `-extension layouts_beta`, record fields, constructor arguments,
-inline-record fields, and unboxed-record fields may have kind `any`:
+inline-record fields, and unboxed-record fields may have kind `any`.
+Projections and constructions require the type to be representable at
+the use site:
 
 ```ocaml
+(* ocamlopt -extension layouts_beta *)
 type ('a : any) t = { fst : 'a; mutable snd : 'a }
-let fst (t : int t) = t.fst    (* ok: instantiated representably *)
+let a : float# t = { fst = #1.0; snd = #2.0 }
+let b : int t = { fst = 1; snd = 2 }
+type ('a : any) u = #{ a : 'a; s : string }
+let c : int64_u u = #{ a = #1L; s = "" }
 
 let fst (type a : any) (t : a t) = t.fst
-(* Error: Fields being projected must be representable. *)
+(* Error: Record element types must have a representable layout.
+          The layout of a is any … *)
 ```
 
-Projections and constructions require the type to be representable at
-the use site.
+Without `layouts_beta` the declaration itself is an error (it used to
+compile, with the `('a : any)` annotation on a parameter used directly
+as a field type *silently narrowed* to `value_or_null`):
 
-## Box Types (UNRELEASED, 5.4.0-ox2+)
+```
+type ('a : any) t = { fst : 'a }
+Error: This construct requires the beta version of the extension
+       "layouts", which is disabled and cannot be used
+```
 
-`'a box` is a predefined type constructor (parameter kind `any`) that
-denotes the boxed version of a type and reduces during unification:
+The gate fires for record fields, `A of 'a`, inline records, unboxed
+records, and fields of an abstract `type t : any`. It does not fire
+when the variable only appears under another constructor
+(`{ x : 'a list }` is accepted, with warning 181). Fix by dropping the
+annotation, writing `('a : value_or_null)`, or enabling
+`layouts_beta`.
+
+## Box Types
+
+`'a box` is a predefined type constructor (parameter kind `any`,
+result kind `value`) that denotes the boxed version of a type and
+reduces during unification. No extension flag needed.
 
 ```ocaml
-float# box = float        int64# box = int64
-int# box = int            #(int64# * string) box = int64# * string
-type r = { x : int }      (* r# box = r *)
+float# box = float        int# box = int
+int8# box = int8          bool# box = bool      char# box = char
+'a ref# box = 'a ref      int8x16# box = int8x16
+#(int * string) box = int * string
+string array# box = string array
+type r = { x : int }       (* r# box = r *)
 type ('a : any) b = 'a box (* float# b = float *)
 ```
 
-No extension flag needed. Nominality is preserved (an unboxed record's
-`box` only unifies with *its own* boxed record). Float records have no
-unboxed version and don't unify with `_ box`.
+**Not reduced** (left as abstract `value` types): `int64_u box`,
+`int32_u box`, `nativeint_u box`, `float32_u box`, `uint8_u box`,
+and `u box` for an explicitly-declared unboxed record `u`. In
+particular, **`int64_u box` is a different type from `int64`**
+(likewise `int32`, `nativeint`, `float32`), and there is no `%box`
+primitive yet, so such a type cannot be constructed — box through
+`Int64_u.to_int64` etc. instead.
 
-## Unboxed Number Names: `int64_u` etc. (UNRELEASED, 5.4.0-ox2+)
+Nominality is preserved (an unboxed record's `box` only unifies with
+*its own* boxed record). Float records have no unboxed version and
+don't unify with `_ box`. A user type named `box` shadows the
+predefined one — avoid that name.
 
-`int64_u = int64#`, `int32_u = int32#`, `nativeint_u = nativeint#` are
-predefined aliases on unreleased compilers. The `#`-suffixed names are
-slated to be removed there (they are not true unboxed versions of the
-boxed custom-block types) — prefer the `_u` names once on a build that
-has them; on released compilers keep using the `#` names.
+## Layout Polymorphism: `let poly_` / `val poly_` (alpha)
 
-## `val poly_` and `let poly_` (UNRELEASED, layout polymorphism)
-
-Since the unreleased 5.4.0-ox2, signatures support layout-polymorphic
-value descriptions:
+**Requires `-extension layout_poly_alpha`** (neither `layout_poly_beta`
+nor `layouts_alpha` enables it; without it: `Error: The extension
+"layout_poly" is disabled and cannot be used`).
 
 ```ocaml
-val poly_ mk : 'a -> 'b -> #('a * 'b)
-val poly_ mk2 : ('a : immediate) 'b. 'a -> 'b -> #('a * 'b)
+(* ocamlopt -extension layout_poly_alpha *)
+let poly_ id x = x
+let poly_ pair x y = #(x, y)
+
+let #(a, b) = pair "a" #1L       (* string, int64_u *)
+let c = id #42.0                 (* float# *)
+
+module type S = sig
+  val poly_ mk : 'a -> 'b -> #('a * 'b)
+  (* only FREE type variables are layout-polymorphic; explicitly
+     quantified ones stay value: here only 'b is polymorphic *)
+  val poly_ baz : ('a : immediate). 'a -> 'b -> #('a * 'b)
+end
 ```
 
-Warning 219 `Useless_valpoly` fires if there are no layout-polymorphic
-variables. A `let poly_` binding with no layout variables is an
-**error** (was warning 217, which no longer exists).
+- `ocamlopt -i` prints `val poly_ id : 'a -> 'a`.
+- **Warning 219** (no mnemonic) if a `val poly_` has no
+  layout-polymorphic variables — e.g. when every variable is
+  explicitly quantified; it then behaves as a plain `val`.
+- `let poly_ f = 42` is an **error** ("This binding has no layout
+  variables, so poly_ has no effect"; it was warning 217, which no
+  longer exists).
+- The right-hand side must be a syntactic value (function,
+  constructor, tuple, record, constant).
+- `let rec poly_` gives warning 218 and is not polymorphic; a
+  `let poly_ … and …` group must be all `poly_` or none.
+- `layout_` quantifiers are not allowed inside `val poly_`, nor in
+  term-level annotations.
+- A `poly_` value does not match an ordinary `val id : 'a -> 'a` in a
+  signature.
+- **Cross-module use is restrictive**: the defining `.mli` must start
+  with `@@ static` and the client must see the `.cmx` (`-Ix <dir>`),
+  otherwise "The value Lib.pair is dynamic but is expected to be
+  static because it is layout-polymorphic and being instantiated
+  here."
+
+For production code, `ppx_template` (below) remains the way to write
+kind-polymorphic definitions.
 
 ---
 
@@ -414,61 +490,29 @@ let%template id (type a : k) (x : a) : a = x
 let f x = (id [@kind float64]) x
 ```
 
----
-
-## Kind Inference
-
-The compiler infers kinds when possible:
+Kind-polymorphic types:
 
 ```ocaml
-(* 'a inferred as value (default) *)
-let f x = x
-(* val f : 'a -> 'a *)
+type%template ('a : k) cell = { mutable value : 'a }
+[@@kind k = (value, float64, bits32)]
 
-(* 'a inferred from context *)
-let g (x : float#) = x
-(* val g : float# -> float# *)
-(* Internally: ('a : float64). 'a -> 'a instantiated *)
-```
+let%template get (type a : k) (c : (a cell[@kind k])) : a = c.value
+[@@kind k = (value, float64, bits32)]
 
-### Flexible vs Rigid Variables
-
-```ocaml
-(* Flexible: infers kind from usage *)
-let f x = (x : float#)
-(* x must have kind float64 *)
-
-(* Rigid: kind specified at binding *)
-let g (type a : float64) (x : a) = x
-(* a is exactly float64 *)
-```
-
----
-
-## Subkinding
-
-More specific kinds can be used where general ones are expected:
-
-```ocaml
-immediate ≤ immediate64 ≤ value ≤ any
-float64 ≤ any
-bits32 ≤ any
-(* etc. *)
-
-(* Can pass immediate where value expected *)
-val f : ('a : value). 'a -> 'a
-let _ = f 42  (* int is immediate, which ≤ value *)
+let%template set (type a : k) (c : (a cell[@kind k])) (v : a) : unit =
+  c.value <- v
+[@@kind k = (value, float64, bits32)]
 ```
 
 ---
 
 ## Kind Errors and Solutions
 
-### "This type has kind X but was expected to have kind Y"
+### "This constant has type float# but an expression was expected of type ('a : value)"
 
 ```ocaml
-(* ERROR: float# has kind float64, not value *)
-let f (x : 'a) = x
+(* ERROR: float# has layout float64, not value ('a. defaults to value) *)
+let f : 'a. 'a -> 'a = fun x -> x
 let _ = f #3.14
 
 (* FIX: Add kind annotation *)
@@ -480,7 +524,7 @@ let%template f (type a : k) (x : a) = x
 [@@kind k = (value, float64)]
 ```
 
-### "Cannot use type with kind X in this context"
+### "This type float# should be an instance of type ('a : value_or_null)"
 
 ```ocaml
 (* ERROR: list elements must be value *)
@@ -493,73 +537,16 @@ let good : float list = [1.0; 2.0]
 let also_good : float# array = [| #1.0; #2.0 |]
 ```
 
-### "The layout of 'a is X because..."
+### "The layout of a is X because... But the layout of a must be a sublayout of Y"
 
 ```ocaml
 (* ERROR: conflicting kind constraints *)
-let bad (type a : value) (x : a) : float# = x
+let bad (type a : value) (x : a) : (_ : float64) = x
 
-(* The error explains: 'a has kind value, but float# needs float64 *)
+(* The error explains: the layout of a is value (from its annotation),
+   but it must be a sublayout of float64 *)
 ```
 
----
-
-## Common Patterns
-
-### Kind-Polymorphic Wrapper
-
-```ocaml
-type%template ('a : k) cell = { mutable value : 'a }
-[@@kind k = (value, float64, bits32)]
-
-let%template get (type a : k) (c : a cell) : a = c.value
-[@@kind k = (value, float64, bits32)]
-
-let%template set (type a : k) (c : a cell) (v : a) : unit = c.value <- v
-[@@kind k = (value, float64, bits32)]
-```
-
-### Constraint Propagation
-
-```ocaml
-(* Container constrains element kind *)
-type ('a : value) box = { contents : 'a }
-
-(* Function inherits constraint *)
-let unbox (b : 'a box) : 'a = b.contents
-(* 'a implicitly has kind value *)
-```
-
-### Mixed Kind Records
-
-```ocaml
-type measurement = {
-  label : string;        (* value *)
-  value : float#;        (* float64, stored unboxed *)
-  precision : int32#;    (* bits32, stored unboxed *)
-}
-
-(* Efficient: unboxed fields inline, no extra indirection *)
-```
-
----
-
-## Summary Table
-
-| Kind | Examples | GC Scanned | Size |
-|------|----------|------------|------|
-| `value` | `int list`, `string` | Yes | 1 word |
-| `immediate` | `int`, `bool`, `char` | No | 1 word |
-| `float64` | `float#` | No | 8 bytes |
-| `float32` | `float32#` | No | 4 bytes |
-| `bits8` | `int8#`, `char#`, `bool#` | No | 1 byte |
-| `bits16` | `int16#` | No | 2 bytes |
-| `bits32` | `int32#` | No | 4 bytes |
-| `bits64` | `int64#` | No | 8 bytes |
-| `word` | `nativeint#` | No | native |
-| `untagged_immediate` | `int#` | No | native |
-| `void` | `unit#` | - | 0 |
-| `any` | (any of above) | Varies | Varies |
-
-See also: [SKILL-UNBOXED.md](SKILL-UNBOXED.md) for unboxed types,
+See also: [SKILL-UNBOXED.md](SKILL-UNBOXED.md) for unboxed types
+(including mixed-kind records),
 [SKILL-TEMPLATES.md](SKILL-TEMPLATES.md) for kind polymorphism.

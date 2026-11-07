@@ -5,85 +5,66 @@ description: "OxCaml uniqueness types for tracking single-reference values enabl
 
 # OxCaml Uniqueness: Detailed Guide
 
-Uniqueness tracking ensures values have exactly one reference, enabling safe
-in-place mutation and resource management without runtime checks.
+Uniqueness tracking enables safe in-place mutation and resource
+management without runtime checks.
 
-## Core Concepts
+| Mode | Meaning | Subtyping | Crosses |
+|------|---------|-----------|---------|
+| `unique` | Exactly one reference to this value exists | ≤ `aliased` | Immediates, unboxed numbers, function types |
+| `aliased` | Multiple references may exist | (top) | - |
+| `many` | Closure can be called any number of times | ≤ `once` | Types containing no functions |
+| `once` | Closure can be called at most once | (top) | - |
 
-### Uniqueness Mode
-
-- **`unique`**: Exactly one reference to this value exists
-- **`aliased`**: Multiple references may exist
-
-### Linearity Mode (Related)
-
-- **`once`**: Closure can be called at most once
-- **`many`**: Closure can be called any number of times
-
-These are related because a closure capturing a unique value can only be called
-once (otherwise it would use the unique value twice).
+- Uniqueness (`unique`/`aliased`) and linearity (`once`/`many`) are
+  related: a closure capturing a unique value can only be called once
+  (otherwise it would use the unique value twice).
+- `unique ≤ aliased`: a unique value can be used where aliased is
+  expected (you can forget uniqueness); passing an aliased value where
+  unique is expected is a type error.
+- The legacy `unique_`/`once_` prefixes are removed, and `borrow_` has
+  placement rules: see [SKILL-MODES.md](SKILL-MODES.md).
 
 ---
 
 ## Syntax
 
-### On Parameters
-
 ```ocaml
-(* Unique parameter - function consumes the only reference *)
-let free (x @ unique) = External.free x
-
-(* Aliased parameter - multiple references allowed *)
-let copy (x @ aliased) = clone x
+val allocate : unit -> bytes @ unique                  (* returns a unique value *)
+val free : bytes @ unique -> unit                      (* consumes the only reference *)
+val duplicate : 'a -> ('a * 'a) @ aliased
+val register_callback : (unit -> unit) @ once -> unit  (* can only be invoked once *)
+val set_handler : (int -> unit) @ many -> unit         (* can be invoked repeatedly *)
 ```
 
-### On Return Types
-
-```ocaml
-(* Return unique value *)
-val allocate : unit -> t @ unique
-
-(* Return aliased (duplicated) *)
-val duplicate : t -> (t * t) @ aliased
-```
-
-### On Closures
-
-```ocaml
-(* Once closure - can only be invoked once *)
-val register_callback : (unit -> unit) @ once -> unit
-
-(* Many closure - can be invoked repeatedly *)
-val set_handler : (event -> unit) @ many -> unit
-```
-
-### Combining with Locality
-
-```ocaml
-(* Local and unique *)
-val borrow : t @ unique -> (t @ local -> 'a) -> 'a * t @ unique
-
-(* All combinations possible *)
-let f (x @ local unique once) = ...
-```
+On parameters: `let free (x @ unique) = ...`,
+`let copy (x @ aliased) = ...`. Modes of all axes combine:
+`let f (x @ local unique once) = ...` (see also `with_ref` below).
 
 ---
 
-## Uniqueness Subtyping
+## Mode Crossing
 
-Unique values can be used where aliased are expected (you can forget uniqueness):
+Some types cross uniqueness (can be treated as unique even when aliased):
 
 ```ocaml
-unique ≤ aliased
+(* Immediates cross uniqueness *)
+let f (x @ aliased) : int @ unique = x  (* OK: int crosses *)
 
-(* OK: use unique where aliased expected *)
-let store (x @ aliased) = global_ref := x
-let _ = store unique_value  (* OK *)
+(* Function types cross uniqueness too *)
+let h (f @ aliased) : (int -> int) @ unique = f  (* OK *)
 
-(* ERROR: use aliased where unique expected *)
-let consume (x @ unique) = free x
-let _ = consume aliased_value  (* Type error! *)
+(* Boxed data does NOT cross, even when immutable *)
+let g (lst @ aliased) : int list @ unique = lst
+(* ERROR: This value is aliased but is expected to be unique. *)
 ```
+
+A type crosses uniqueness if:
+- It's an immediate (int, bool, char, etc.) or an unboxed number (`float#`)
+- It's a function type
+
+Lists, records, refs and other boxed data do **not** cross uniqueness
+— a unique list really must have a single reference. (Linearity is
+different: any type containing no functions crosses `once`/`many`.)
 
 ---
 
@@ -105,103 +86,100 @@ val insert : 'a @ aliased -> 'a collection @ unique -> 'a collection @ unique
 val free_container : 'a collection @ unique -> unit
 ```
 
-### Reading Aliased Fields
-
 ```ocaml
-type t = {
-  metadata : string @@ aliased;
-  payload : data;
+type container = {
+  handle : int ref;           (* unique with container *)
+  cache : string @@ aliased;  (* aliased, shared elsewhere *)
 }
+let free (x @ unique) = ()
 
-let get_metadata (t @ unique) : string (* aliased *) =
-  t.metadata  (* Reading aliased field returns aliased value *)
+(* Can free handle; cache is not freed and may still be used elsewhere *)
+let close_container (c @ unique) = free c.handle
+
+(* Reading an aliased field returns an aliased value *)
+let get_cache (c @ unique) : string (* aliased *) = c.cache
 ```
 
 ---
 
 ## Uniqueness Analysis
 
-The compiler tracks which values are unique through:
-
-### Aliasing via Binding
-
-```ocaml
-let x = make_unique () in
-let y = x in  (* Now both x and y reference same value *)
-(* x and y are both aliased *)
-free x  (* ERROR: x is aliased, not unique *)
-```
-
-### Field Access Tracking
+The compiler tracks unique values through plain rebindings and
+per-field uses:
 
 ```ocaml
+type sub
 type t = { a : sub; b : sub }
+let free (x @ unique) = ()
 
 let ok (r @ unique) =
   free r.a;
-  free r.b  (* OK: different fields *)
+  free r.b      (* OK: different fields *)
 
-let bad (r @ unique) =
-  free r.a;
-  free r    (* ERROR: r.a already freed, r contains it *)
-```
-
-### Renaming is Tracked
-
-```ocaml
-let ok (r @ unique) =
+let ok2 (r @ unique) =
   let s = r in  (* s and r are aliases, both tracked *)
   free s.a;
   free r.b      (* OK: compiler knows s = r *)
 ```
 
-### Complex Aliases Not Tracked
+- **Aliasing via binding**: in `let y = x in free x; y`, binding `y`
+  alone is fine (a tracked alias of `x`) and `free x` consumes the
+  value, but then using `y` is an error: "This value is used here, but
+  it has already been used as unique at: ...".
+- **Whole after part**: `free r.a; free r` is an error (`r.a` already
+  freed, `r` contains it): "This value is used here, but part of it
+  has already been used as unique at: ...".
+- **Complex aliases are not tracked**: in
+  `let s = Fun.id r in free s.a; free r.b`, `s` is the result of a
+  call, so it is aliased and `free s.a` fails: "This value is aliased
+  because it is the field a of the record at ... which is aliased.
+  However, the highlighted expression is expected to be unique."
+
+### Branches
+
+Mutually exclusive branches (`if` or `match`) can use a unique value
+differently:
 
 ```ocaml
-let bad (r @ unique) =
-  let s = Fun.id r in  (* s is not tracked as alias of r *)
-  free s.a;
-  free r.b             (* ERROR: can't prove safety *)
-```
+let free (x @ unique) = ()
+let store (x @ aliased) = ()
 
----
-
-## Branch Uniqueness
-
-Different branches can use unique values differently:
-
-```ocaml
-let ok (x @ unique) =
+let ok (x @ unique) condition =
   if condition then
-    free x           (* Use uniquely in this branch *)
+    free x              (* Use uniquely in this branch *)
   else
     (store x; store x)  (* Use as aliased in this branch *)
-  (* OK: mutually exclusive *)
 
-let ok2 (x @ unique) =
+let ok2 (x : int option @ unique) =
   match x with
-  | A -> free x
-  | B -> ignore x  (* aliased use *)
-  (* OK: different branches *)
+  | Some _ -> free x
+  | None -> ignore x    (* aliased use *)
 ```
 
 ---
 
 ## Once Closures
 
-Closures capturing unique values are `once`:
+Closures capturing unique values are `once`; a `once` closure may
+consume what it captured, since it runs at most once:
 
 ```ocaml
+let free (x @ unique) = ()
+
 let make_callback (resource @ unique) : (unit -> unit) @ once =
   fun () -> free resource
 
-(* Can only call once *)
-let callback = make_callback resource in
-callback ();
-callback ()  (* ERROR: once closure called twice *)
+let on_complete (f : (int -> unit) @ once) = f 1
+let use_resource (r : int ref @ local) (x : int) = ()   (* borrows *)
+let example (resource : int ref @ unique) =
+  on_complete (fun result ->
+    use_resource (borrow_ resource) result;
+    free resource)  (* safe: callback runs at most once *)
 ```
 
-### Many Modality on Captured Values
+Calling the resulting callback twice (`callback (); callback ()`) is
+an error (see Common Errors). A `@@ many` field rejects `once`
+closures:
 
 ```ocaml
 type callback_data = {
@@ -211,29 +189,6 @@ type callback_data = {
 let store (cb @ once) : callback_data @ unique =
   { f = cb }  (* ERROR: cb is once, field requires many *)
 ```
-
----
-
-## Mode Crossing
-
-Some types cross uniqueness (can be treated as unique even when aliased):
-
-```ocaml
-(* Immediates cross uniqueness *)
-let f (x @ aliased) : int @ unique = x  (* OK: int crosses *)
-
-(* Immutable data without refs crosses *)
-let g (lst @ aliased) : int list @ unique = lst  (* OK if truly immutable *)
-
-(* Functions don't cross *)
-let h (f @ aliased) : (int -> int) @ unique = f  (* ERROR *)
-```
-
-### Checking Mode Crossing
-
-A type crosses uniqueness if:
-- It's an immediate (int, bool, char, etc.)
-- It's immutable data without functions or mutable fields
 
 ---
 
@@ -264,10 +219,14 @@ val create : unit -> 'a builder @ unique
 val add : 'a -> 'a builder @ unique -> 'a builder @ unique
 val freeze : 'a builder @ unique -> 'a array (* aliased, immutable *)
 
+(* Thread the unique builder through explicit recursion: Stdlib's
+   List.fold_left takes and returns its accumulator aliased *)
 let build_array items =
-  let b = create () in
-  let b = List.fold_left (fun b x -> add x b) b items in
-  freeze b  (* Returns immutable array *)
+  let rec go (b @ unique) = function
+    | [] -> freeze b          (* Returns immutable array *)
+    | x :: xs -> go (add x b) xs
+  in
+  go (create ()) items
 ```
 
 ### Threading Unique Values
@@ -279,9 +238,11 @@ let bad (arr @ unique) =
     set arr i 0  (* ERROR: arr used multiple times *)
   done
 
-(* GOOD: thread unique through *)
+(* GOOD: thread unique through; borrow_ for the read-only use so it
+   doesn't count as a (second) unique use.
+   val length : arr @ local -> int *)
 let rec set_all (arr @ unique) i =
-  if i >= length arr then arr
+  if i >= length (borrow_ arr) then arr
   else set_all (set arr i 0) (i + 1)
 
 let good (arr @ unique) = set_all arr 0
@@ -305,99 +266,37 @@ let example (data @ unique) =
 
 ## Common Errors and Solutions
 
-### "This value is aliased but expected to be unique"
-
-```ocaml
-(* ERROR *)
-let bad x =
-  let y = x in
-  free x  (* x is aliased due to y *)
-
-(* FIX: Don't alias before unique use *)
-let good x =
-  free x
-
-(* FIX: Use the alias *)
-let good2 x =
-  let y = x in
-  free y
-```
-
-### "Cannot use value uniquely after pattern match"
-
-```ocaml
-(* ERROR: pattern match aliases *)
-let bad (t @ unique) =
-  match t with
-  | { field } ->
-    use_field field;
-    free t  (* ERROR: t aliased by pattern *)
-
-(* FIX: Use with_ref pattern *)
-let good (t @ unique) =
-  let result, t = with_ref t (fun t ->
-    match t with
-    | { field } -> use_field field
-  ) in
-  free t;
-  result
-```
-
-### "This closure is once but expected to be many"
-
-```ocaml
-(* ERROR *)
-let bad (r @ unique) =
-  let f () = free r in
-  register_handler f  (* handler expects many *)
-
-(* FIX: Don't capture unique in many closure *)
-let good () =
-  let f () = () in  (* No unique captures *)
-  register_handler f
-```
-
-### "Cannot call once closure multiple times"
-
-```ocaml
-(* ERROR *)
-let bad (f @ once) =
-  f (); f ()
-
-(* FIX: Only call once, or require many *)
-let good (f @ once) = f ()
-let good2 (f @ many) = f (); f ()
-```
+- **"This value is used here, but it has already been used as
+  unique"** — `let y = x in free x; y`: `free x` consumes `x`, so its
+  alias `y` can't be used afterwards. Fix: don't alias before the
+  unique use (`free x`), or use the alias instead
+  (`let y = x in free y`).
+- **"This value is used here as unique, but part of it has already
+  been used"** — `match t with { field } -> use_field field; free t`
+  (the error points at `use_field field`, not at the pattern). Fix:
+  the `with_ref` pattern above — do the `match` and `use_field field`
+  inside the callback, then `free` the `t` it returns.
+- **"This value is once ... expected to be many"** —
+  `let f () = free r in register_handler f` where the handler expects
+  `many` and `r` is unique. Fix: don't capture a unique value in a
+  `many` closure.
+- **"This value is used here, but it is defined as once and has
+  already been used"** — a `once` closure called twice:
+  `let bad (f @ once) = f (); f ()`, or `let f () = free r in f (); f ()`
+  with `r` unique. Fix: only call once (`let good (f @ once) = f ()`),
+  or require many (`let good2 (f @ many) = f (); f ()`), or thread the
+  unique value through instead of capturing it
+  (`let r = use r in let r = use r in free r`).
+- **"This value is aliased but is expected to be unique"** — an
+  aliased value was used where unique is expected and its type does
+  not cross uniqueness (see Mode Crossing).
 
 ---
 
-## Uniqueness with Aliased Fields
-
-```ocaml
-type container = {
-  handle : handle;  (* unique with container *)
-  cache : data @@ aliased;  (* aliased, shared elsewhere *)
-}
-
-let close_container (c @ unique) =
-  (* Can free handle, cache may still be used elsewhere *)
-  free_handle c.handle
-  (* cache is not freed *)
-
-let get_cache (c @ unique) : data (* aliased *) =
-  c.cache  (* Returns aliased copy *)
-```
-
----
-
-## Summary
-
-| Mode | Meaning | Subtyping | Crosses |
-|------|---------|-----------|---------|
-| `unique` | Single reference | ≤ `aliased` | Immediates, imm. data |
-| `aliased` | Multiple references | (top) | - |
-| `once` | Call at most once | ≤ `many` | Non-function types |
-| `many` | Call any times | (top) | - |
+A curried function whose `unique` first parameter is not itself
+consumed prints as `a @ unique -> (b -> c)` (the partial application
+is `many`); `a @ unique -> b -> c` means the partial application is
+`once`. See [SKILL-MODES.md](SKILL-MODES.md).
 
 See also: [SKILL-MODES.md](SKILL-MODES.md) for full mode system,
 [SKILL-STACK-ALLOCATION.md](SKILL-STACK-ALLOCATION.md) for locality.

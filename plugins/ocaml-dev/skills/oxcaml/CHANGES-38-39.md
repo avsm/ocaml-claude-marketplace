@@ -2,10 +2,12 @@
 
 This document summarizes the key changes between OxCaml versions
 5.2.0minus-38 (2026-05-05) and 5.2.0minus-39 (2026-05-22). The compiler
-ships as `ocaml-variants.5.2.0+ox`, on the OCaml 5.2 base.
-**5.2.0minus-39 is the latest released version.** Later tags
-(`5.2.0minus-40`, `5.4.0-ox1`, `5.4.0-ox2`) are unreleased — see
-[CHANGES-unreleased.md](CHANGES-unreleased.md).
+ships as `ocaml-variants.5.2.0+ox`, on the OCaml 5.2 base. For what
+came next (`5.2.0minus-40`, the OCaml 5.4 rebase, `5.4.0-ox1` …
+`5.4.0-ox9`) see [CHANGES-39-ox9.md](CHANGES-39-ox9.md). Note that
+several minus-39 rules described here were relaxed or reversed later
+(`[@@flatten_floats]` became optional; `int64#`-style names were
+removed at ox7).
 
 ## At a glance
 
@@ -35,7 +37,8 @@ For users tracking the headline changes:
   default (#6081).
 - **Preemption groundwork** (#4881): an `Effect.Preemption` effect
   constructor and `Domain.Tick.acquire`/`release` exist, but there is
-  no way to run preemptible code yet (the handler API is unreleased).
+  no way to run preemptible code yet (the handler API arrives in
+  minus-40).
 - **Merlin is now vendored** in `external/merlin/` and retagged in
   lockstep with each compiler release (#5568).
 - **Magic number bumped** 577 → 578 (#6107): rebuild everything.
@@ -221,8 +224,8 @@ it is **groundwork only — there is no way to run preemptible code**:
   frequently as requested.
 
 The usable API — `Effect.Deep.Preemptible` / `Shallow.Preemptible`
-handlers, `tick_outcome`, `Domain.Tick.with_` — is **unreleased**
-(see CHANGES-unreleased.md). Follow-up in this window: an
+handlers, `tick_outcome`, `Domain.Tick.with_` — arrives in minus-40
+(see CHANGES-39-ox9.md). Follow-up in this window: an
 Onload-compatibility workaround for the tick thread (#6016).
 
 ### GC
